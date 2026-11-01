@@ -2,6 +2,7 @@ import { db } from "./db";
 import { configWarnings, useSupabase } from "./env";
 import { ffmpegAvailable } from "./ffmpeg";
 import { workerState } from "./jobs/worker";
+import { key, type KeyName } from "./keys";
 import { providerSummary } from "./providers";
 import { LOCAL_USER } from "./util";
 
@@ -37,7 +38,7 @@ export async function health(userId = LOCAL_USER) {
   let cost = { total: 0, last24h: 0 };
   if (dbOk) {
     const [allJobs, errs, usage] = await Promise.all([
-      db().list("jobs", { orderBy: "createdAt", desc: true, limit: 500 }),
+      db().list("jobs", { where: { userId }, orderBy: "createdAt", desc: true, limit: 500 }),
       db().list("errors", { where: { userId }, orderBy: "createdAt", desc: true, limit: 300 }),
       db().list("usage", { where: { userId }, orderBy: "createdAt", desc: true, limit: 5000 }),
     ]);
@@ -60,7 +61,7 @@ export async function health(userId = LOCAL_USER) {
   return {
     ok: checks.every((c) => c.ok),
     checks,
-    warnings: configWarnings(),
+    warnings: configWarnings((n) => !!key(n as KeyName)),
     providers,
     offlineMode,
     jobs,

@@ -16,6 +16,12 @@ const schema = z.object({
   ELEVENLABS_API_KEY: opt,
   ELEVENLABS_VOICE_ID: opt,
   PEXELS_API_KEY: opt,
+  OPENAI_IMAGE_MODEL: opt,
+  OPENAI_TTS_MODEL: opt,
+  OPENAI_TTS_VOICE: opt,
+  ELEVENLABS_MODEL: opt,
+  SUPABASE_ANON_KEY: opt,
+  APP_SECRET: opt,
   SUPABASE_URL: opt,
   SUPABASE_SERVICE_ROLE_KEY: opt,
   SUPABASE_STORAGE_BUCKET: opt,
@@ -41,26 +47,26 @@ export const ffprobeBin = () => env().FFPROBE_PATH || "ffprobe";
 export const useSupabase = () => !!(env().SUPABASE_URL && env().SUPABASE_SERVICE_ROLE_KEY);
 
 /** Human-readable config problems for the System Health page. */
-export function configWarnings(): { level: "info" | "warn"; message: string; fix: string }[] {
+export function configWarnings(has: (name: string) => boolean): { level: "info" | "warn"; message: string; fix: string }[] {
   const e = env();
   const out: { level: "info" | "warn"; message: string; fix: string }[] = [];
-  if (!e.OPENAI_API_KEY && !e.ANTHROPIC_API_KEY)
+  if (!has("OPENAI_API_KEY") && !has("ANTHROPIC_API_KEY"))
     out.push({
       level: "warn",
       message: "No AI writer connected. Scripts use the simple offline writer.",
-      fix: "Add OPENAI_API_KEY or ANTHROPIC_API_KEY to your environment.",
+      fix: "Paste an Anthropic or OpenAI key below.",
     });
-  if (!e.OPENAI_API_KEY && !e.ELEVENLABS_API_KEY)
+  if (!has("OPENAI_API_KEY") && !has("ELEVENLABS_API_KEY"))
     out.push({
       level: "warn",
       message: "No AI voice connected. Videos use the robot voice.",
-      fix: "Add ELEVENLABS_API_KEY or OPENAI_API_KEY.",
+      fix: "Paste an ElevenLabs or OpenAI key below.",
     });
-  if (!e.OPENAI_API_KEY && !e.PEXELS_API_KEY)
+  if (!has("OPENAI_API_KEY") && !has("PEXELS_API_KEY"))
     out.push({
       level: "warn",
       message: "No image source connected. Videos use simple title cards.",
-      fix: "Add OPENAI_API_KEY (AI images) or PEXELS_API_KEY (free stock photos).",
+      fix: "Paste an OpenAI key (AI images) or a Pexels key (free stock photos) below.",
     });
   if (!!e.SUPABASE_URL !== !!e.SUPABASE_SERVICE_ROLE_KEY)
     out.push({

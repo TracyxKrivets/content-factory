@@ -1,17 +1,19 @@
 import { handle } from "@/lib/api";
+import { currentUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { providerOrder } from "@/lib/providers";
-import { LOCAL_USER, now } from "@/lib/util";
+import { now } from "@/lib/util";
 
 export const dynamic = "force-dynamic";
-export const GET = handle(async () => ({ providerOrder: await providerOrder() }));
+export const GET = handle(async () => ({ providerOrder: await providerOrder((await currentUser()).id) }));
 export const PUT = handle(async (req: Request) => {
+  const { id: userId } = await currentUser();
   const { providerOrder: order } = await req.json();
-  const id = `settings-${LOCAL_USER}`;
+  const id = `settings-${userId}`;
   const existing = await db().get("settings", id);
   if (existing) await db().update("settings", id, { providerOrder: order || {} });
   else {
     const t = now();
-    await db().insert("settings", { id, userId: LOCAL_USER, providerOrder: order || {}, createdAt: t, updatedAt: t });
+    await db().insert("settings", { id, userId, providerOrder: order || {}, createdAt: t, updatedAt: t });
   }
 });

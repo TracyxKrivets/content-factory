@@ -1,3 +1,4 @@
+import { key as apiKey } from "../../keys";
 import { env } from "../../env";
 import { httpError, ProviderError } from "../../errors";
 import { tokenCost } from "../pricing";
@@ -7,9 +8,9 @@ export const anthropicLlm: LlmProvider = {
   id: "anthropic",
   label: "Anthropic Claude",
   capability: "llm",
-  available: () => !!env().ANTHROPIC_API_KEY,
+  available: () => !!apiKey("ANTHROPIC_API_KEY"),
   async complete(req) {
-    const key = env().ANTHROPIC_API_KEY;
+    const key = apiKey("ANTHROPIC_API_KEY");
     if (!key) throw new ProviderError("missing_key", "ANTHROPIC_API_KEY not set", { provider: "anthropic" });
     const model =
       req.tier === "quality"

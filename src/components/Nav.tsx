@@ -1,11 +1,13 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { usePoll } from "./ui";
+import { api, usePoll } from "./ui";
 
 export function Nav() {
   const path = usePathname();
   const { data } = usePoll<{ openErrors: number; ok: boolean }>("/api/health", 15000);
+  const { data: me } = usePoll<{ enabled: boolean; user?: { email: string | null } | null }>("/api/auth", 0, false);
+  if (path === "/login") return <nav className="nav"><span className="logo">CONTENT<br />FACTORY</span></nav>;
   const on = (p: string) => (p === "/" ? path === "/" : path.startsWith(p));
   return (
     <nav className="nav">
@@ -27,6 +29,19 @@ export function Nav() {
         ⚙ System
         {data && (data.openErrors > 0 || !data.ok) && <span className="dot" />}
       </Link>
+      {me?.enabled && me.user && (
+        <button
+          className="btn small"
+          style={{ marginLeft: "auto" }}
+          title={me.user.email || ""}
+          onClick={async () => {
+            await api("/api/auth", { body: { action: "logout" } });
+            window.location.href = "/login";
+          }}
+        >
+          Log out
+        </button>
+      )}
     </nav>
   );
 }

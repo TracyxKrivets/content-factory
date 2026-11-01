@@ -160,7 +160,7 @@ export default function Home() {
           <span>🧪</span>
           <span className="small">
             <b>Practice mode.</b> No AI keys yet, so videos use a robot voice and simple title cards.{" "}
-            <Link href="/system" style={{ textDecoration: "underline" }}>
+            <Link href="/system#connect" style={{ textDecoration: "underline" }}>
               Connect AI
             </Link>
           </span>

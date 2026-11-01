@@ -12,17 +12,28 @@ npm run build && npm start   # http://localhost:3000
 
 Needs **ffmpeg** installed (`brew install ffmpeg` / `apt install ffmpeg`).
 
-You don't need any keys to start. With no keys the app runs in **practice mode**: offline template writer, robot voice, and title-card visuals. You can test the whole flow that way, and each card says 🧪 Practice quality.
+You don't need any keys to start. With no keys the app runs in **practice mode**: offline template writer, robot voice, and title-card visuals. Each card says 🧪 Practice quality.
+
+**Connect AI:** go to ⚙ System → Connect AI and paste a key. The app works out which service it's for, stores it encrypted on the server, and tests it. No `.env` editing needed.
 
 | Key | Unlocks |
 |---|---|
-| `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` | Real AI scripts (cheap model for checks/scenes, quality model for writing) |
-| `ELEVENLABS_API_KEY` or `OPENAI_API_KEY` | Real AI voice |
-| `OPENAI_API_KEY` | AI images + exact caption timing |
-| `PEXELS_API_KEY` | Free stock photos |
-| `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | Cloud database + file storage (run `supabase/schema.sql` first) |
+| Anthropic or OpenAI | Real AI scripts (cheap model for checks and scenes, quality model for writing) |
+| ElevenLabs or OpenAI | Real AI voice |
+| OpenAI | AI images (`gpt-image-2`) + exact caption timing |
+| Pexels | Free stock photos |
 
-Without Supabase, everything saves to `./data` on the server.
+Environment variables still work as a fallback, and model names can be overridden there (see `.env.example`).
+
+### Accounts + cloud saving (Supabase)
+
+1. Create a Supabase project and run `supabase/schema.sql` in its SQL editor.
+2. Set `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and `SUPABASE_ANON_KEY`.
+3. Restart the app.
+
+Accounts switch on automatically: log in / sign up, and every user sees only their own projects, formats, keys and videos. Files are stored in the Supabase Storage bucket `content-factory`.
+
+Without Supabase, everything saves to `./data` on the server and there's no login (single user). Projects made in single-user mode don't carry over to accounts.
 
 ## Deploy
 
@@ -50,5 +61,9 @@ Each step's status and output are saved. Finished steps never run again. Regener
 - **USE BACKUP** stops using the failed provider for the whole project and re-queues every video stuck on it.
 - If the server crashes, jobs resume from the first unfinished step.
 - Deleting a project moves it to the trash, where you can restore it.
+
+**Tested against a real Supabase stack** (Postgres + PostgREST + GoTrue + Storage running locally): schema, saving, file upload and re-download, signup/login/logout, and isolation between two users.
+
+`npm start` sets `NODE_USE_ENV_PROXY=1`, so the server's AI calls go through `HTTPS_PROXY` if your host uses one.
 
 **Cost:** LLM, voice and image results are cached by input. Usage is logged per call with an estimated cost (prices are in `providers/pricing.ts`).

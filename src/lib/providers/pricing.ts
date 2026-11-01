@@ -16,6 +16,6 @@ export function tokenCost(model: string, input: number, output: number) {
 export const PRICE = {
   openaiTtsPerChar: 0.000015,
   elevenlabsPerChar: 0.00018,
-  openaiImage: 0.063,
+  openaiImage: 0.106, // gpt-image-2, 1024x1536 medium
   whisperPerMinute: 0.006,
 };

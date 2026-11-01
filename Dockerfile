@@ -15,4 +15,4 @@ ENV NODE_ENV=production PORT=3000 CAPTION_FONT="DejaVu Sans"
 COPY --from=build /app ./
 EXPOSE 3000
 # Mount a volume at /app/data if you are not using Supabase, so projects survive redeploys.
-CMD ["npx", "next", "start", "-p", "3000"]
+CMD ["npm", "start", "--", "-p", "3000"]

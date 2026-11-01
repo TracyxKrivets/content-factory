@@ -1,3 +1,4 @@
+import { key as apiKey } from "../../keys";
 import fs from "node:fs/promises";
 import { env } from "../../env";
 import { httpError, ProviderError } from "../../errors";
@@ -10,16 +11,16 @@ export const openaiImage: ImageProvider = {
   id: "openai-image",
   label: "OpenAI images",
   capability: "image",
-  available: () => !!env().OPENAI_API_KEY,
+  available: () => !!apiKey("OPENAI_API_KEY"),
   async generate({ prompt, outPath }) {
-    const key = env().OPENAI_API_KEY;
+    const key = apiKey("OPENAI_API_KEY");
     if (!key) throw new ProviderError("missing_key", "OPENAI_API_KEY not set", { provider: "openai-image" });
     const res = await fetch("https://api.openai.com/v1/images/generations", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       signal: AbortSignal.timeout(180_000),
       body: JSON.stringify({
-        model: "gpt-image-1",
+        model: env().OPENAI_IMAGE_MODEL || "gpt-image-2",
         prompt: `${prompt}. Vertical 9:16 cinematic frame, no text, no watermark.`,
         size: "1024x1536",
         quality: "medium",
@@ -40,9 +41,9 @@ export const pexelsImage: ImageProvider = {
   id: "pexels",
   label: "Pexels stock photos",
   capability: "image",
-  available: () => !!env().PEXELS_API_KEY,
+  available: () => !!apiKey("PEXELS_API_KEY"),
   async generate({ search, format, outPath, avoid }) {
-    const key = env().PEXELS_API_KEY;
+    const key = apiKey("PEXELS_API_KEY");
     if (!key) throw new ProviderError("missing_key", "PEXELS_API_KEY not set", { provider: "pexels" });
     const queries = [search, `${search} dark`, format.visualStyle.split(",")[0]];
     for (const q of queries) {

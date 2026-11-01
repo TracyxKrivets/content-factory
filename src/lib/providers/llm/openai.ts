@@ -1,3 +1,4 @@
+import { key as apiKey } from "../../keys";
 import { env } from "../../env";
 import { httpError, ProviderError } from "../../errors";
 import { tokenCost } from "../pricing";
@@ -7,9 +8,9 @@ export const openaiLlm: LlmProvider = {
   id: "openai",
   label: "OpenAI",
   capability: "llm",
-  available: () => !!env().OPENAI_API_KEY,
+  available: () => !!apiKey("OPENAI_API_KEY"),
   async complete(req) {
-    const key = env().OPENAI_API_KEY;
+    const key = apiKey("OPENAI_API_KEY");
     if (!key) throw new ProviderError("missing_key", "OPENAI_API_KEY not set", { provider: "openai" });
     const model =
       req.tier === "quality" ? env().OPENAI_MODEL_QUALITY || "gpt-4.1" : env().OPENAI_MODEL_CHEAP || "gpt-4.1-mini";

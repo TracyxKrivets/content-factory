@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { ConnectAI } from "@/components/ConnectAI";
 import { ago, api, money, usePoll, useUi } from "@/components/ui";
 
 const CAP: Record<string, string> = { llm: "🧠 Writer", voice: "🎙 Voice", image: "👁 Visuals", captions: "💬 Captions", music: "🎵 Music" };
@@ -141,18 +142,18 @@ export default function System() {
             </div>
           </div>
 
-          <h2 style={{ marginTop: 34 }}>🔌 Connected AI</h2>
-          {h.warnings.map((w: any, i: number) => (
-            <div key={i} className={"banner " + (w.level === "warn" ? "warn" : "good")} style={{ marginBottom: 10 }}>
-              <div>
-                <b className="small">{w.message}</b>
-                <div className="small">{w.fix}</div>
-              </div>
+          <h2 style={{ marginTop: 34 }}>🔌 Connect AI</h2>
+          {h.warnings.filter((w: any) => w.level === "warn").map((w: any, i: number) => (
+            <div key={i} className="banner warn" style={{ marginBottom: 10 }}>
+              <b className="small">{w.message}</b>
             </div>
           ))}
-          <p className="small dim">
-            API keys live in the server&apos;s environment (<code>.env.local</code> or your host&apos;s settings), never in the browser. Restart the app after adding one.
-          </p>
+          <ConnectAI onChange={reloadH} />
+          {h.warnings.filter((w: any) => w.level === "info").map((w: any, i: number) => (
+            <p key={i} className="small dim">
+              {w.message} {w.fix}
+            </p>
+          ))}
 
           <details style={{ marginTop: 10 }}>
             <summary>Advanced: provider order</summary>

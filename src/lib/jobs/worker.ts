@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { env } from "../env";
 import { friendly } from "../errors";
+import { withKeys } from "../keys";
 import { runIdeas, runVideo } from "../pipeline/runner";
 import { logError } from "../pipeline/tracking";
 import type { Job } from "../types";
@@ -104,8 +105,11 @@ async function requeueStale(state: WorkerState) {
 async function execute(job: Job, state: WorkerState) {
   state.running.add(job.id);
   try {
-    if (job.kind === "ideas") await runIdeas(job.projectId);
-    else if (job.videoId) await runVideo(job.videoId);
+    // every job runs with its owner's API keys
+    await withKeys(job.userId, async () => {
+      if (job.kind === "ideas") await runIdeas(job.projectId);
+      else if (job.videoId) await runVideo(job.videoId);
+    });
     await db().update("jobs", job.id, { status: "done", lockedAt: null });
   } catch (e: any) {
     // unexpected crash (DB down, bug). Step errors are handled inside runVideo.

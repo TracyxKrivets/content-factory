@@ -1,3 +1,4 @@
+import { key as apiKey } from "../../keys";
 import fs from "node:fs/promises";
 import { env } from "../../env";
 import { httpError, ProviderError } from "../../errors";
@@ -33,9 +34,9 @@ export const whisperCaptions: CaptionProvider = {
   id: "openai-whisper",
   label: "OpenAI exact timing",
   capability: "captions",
-  available: () => !!env().OPENAI_API_KEY,
+  available: () => !!apiKey("OPENAI_API_KEY"),
   async timings({ audioPath, duration }) {
-    const key = env().OPENAI_API_KEY;
+    const key = apiKey("OPENAI_API_KEY");
     if (!key) throw new ProviderError("missing_key", "OPENAI_API_KEY not set", { provider: "openai-whisper" });
     const form = new FormData();
     form.append("file", new Blob([await fs.readFile(audioPath)]), "voice.mp3");

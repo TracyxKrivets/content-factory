@@ -1,3 +1,4 @@
+import { key as apiKey } from "../../keys";
 import fs from "node:fs/promises";
 import { env } from "../../env";
 import { httpError, ProviderError } from "../../errors";
@@ -15,9 +16,9 @@ export const elevenlabsVoice: VoiceProvider = {
   id: "elevenlabs",
   label: "ElevenLabs",
   capability: "voice",
-  available: () => !!env().ELEVENLABS_API_KEY,
+  available: () => !!apiKey("ELEVENLABS_API_KEY"),
   async speak({ text, outPath }) {
-    const key = env().ELEVENLABS_API_KEY;
+    const key = apiKey("ELEVENLABS_API_KEY");
     if (!key) throw new ProviderError("missing_key", "ELEVENLABS_API_KEY not set", { provider: "elevenlabs" });
     const voice = env().ELEVENLABS_VOICE_ID || "pNInz6obpgDQGcFmaJgB";
     const res = await fetch(
@@ -28,7 +29,7 @@ export const elevenlabsVoice: VoiceProvider = {
         signal: AbortSignal.timeout(180_000),
         body: JSON.stringify({
           text,
-          model_id: "eleven_multilingual_v2",
+          model_id: env().ELEVENLABS_MODEL || "eleven_multilingual_v2",
           voice_settings: { stability: 0.45, similarity_boost: 0.75, style: 0.3 },
         }),
       },
@@ -43,17 +44,17 @@ export const openaiVoice: VoiceProvider = {
   id: "openai-tts",
   label: "OpenAI voice",
   capability: "voice",
-  available: () => !!env().OPENAI_API_KEY,
+  available: () => !!apiKey("OPENAI_API_KEY"),
   async speak({ text, style, outPath }) {
-    const key = env().OPENAI_API_KEY;
+    const key = apiKey("OPENAI_API_KEY");
     if (!key) throw new ProviderError("missing_key", "OPENAI_API_KEY not set", { provider: "openai-tts" });
     const res = await fetch("https://api.openai.com/v1/audio/speech", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       signal: AbortSignal.timeout(180_000),
       body: JSON.stringify({
-        model: "gpt-4o-mini-tts",
-        voice: "onyx",
+        model: env().OPENAI_TTS_MODEL || "gpt-4o-mini-tts",
+        voice: env().OPENAI_TTS_VOICE || "onyx",
         input: text,
         instructions: `Speak in a ${style} tone. Short-form horror narration. Clear, with tension.`,
         response_format: "mp3",

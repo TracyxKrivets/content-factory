@@ -8,6 +8,7 @@ export function handle<A extends any[]>(fn: (...a: A) => Promise<unknown>) {
       return out instanceof Response ? out : NextResponse.json(out ?? { ok: true });
     } catch (e: any) {
       console.error("[api]", e?.stack || e);
+      if (e?.status === 401) return NextResponse.json({ error: "Please log in again." }, { status: 401 });
       const msg = String(e?.message || "Something went wrong.");
       const plain = /not found/i.test(msg)
         ? "That item doesn't exist anymore."

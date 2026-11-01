@@ -2,6 +2,8 @@ import fs from "node:fs";
 import { Readable } from "node:stream";
 import { contentType, ensureLocal } from "@/lib/storage";
 import type { Ctx } from "@/lib/api";
+import { authEnabled, currentUser } from "@/lib/auth";
+import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +12,12 @@ export async function GET(req: Request, { params }: Ctx<{ key: string[] }>) {
   const { key } = await params;
   const k = key.map(decodeURIComponent).join("/");
   if (k.includes("..")) return new Response("Bad path", { status: 400 });
+  if (authEnabled()) {
+    // keys look like p/<projectId>/<videoId>/file — only the project owner may read them
+    const user = await currentUser().catch(() => null);
+    const project = k.startsWith("p/") ? await db().get("projects", k.split("/")[1]) : null;
+    if (!user || !project || project.userId !== user.id) return new Response("Not found", { status: 404 });
+  }
   let file: string;
   try {
     file = await ensureLocal(k);
