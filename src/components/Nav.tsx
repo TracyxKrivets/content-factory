@@ -1,0 +1,32 @@
+"use client";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { usePoll } from "./ui";
+
+export function Nav() {
+  const path = usePathname();
+  const { data } = usePoll<{ openErrors: number; ok: boolean }>("/api/health", 15000);
+  const on = (p: string) => (p === "/" ? path === "/" : path.startsWith(p));
+  return (
+    <nav className="nav">
+      <Link href="/" className="logo">
+        CONTENT
+        <br />
+        FACTORY
+      </Link>
+      <Link href="/" className={"link" + (on("/") ? " on" : "")}>
+        ✚ Make
+      </Link>
+      <Link href="/projects" className={"link" + (on("/projects") ? " on" : "")}>
+        📁 Projects
+      </Link>
+      <Link href="/formats" className={"link" + (on("/formats") ? " on" : "")}>
+        📜 Formats
+      </Link>
+      <Link href="/system" className={"link" + (on("/system") ? " on" : "")}>
+        ⚙ System
+        {data && (data.openErrors > 0 || !data.ok) && <span className="dot" />}
+      </Link>
+    </nav>
+  );
+}
