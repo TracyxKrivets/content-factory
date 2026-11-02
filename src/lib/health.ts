@@ -20,9 +20,9 @@ export async function health(userId = LOCAL_USER) {
 
   const ff = await ffmpegAvailable();
   checks.push(
-    ff
-      ? { name: "Video editor", ok: true, message: "ffmpeg is installed." }
-      : { name: "Video editor", ok: false, message: "The video editor (ffmpeg) isn't installed.", fix: "Install ffmpeg on the server or set FFMPEG_PATH / FFPROBE_PATH." },
+    !("error" in ff && ff.error)
+      ? { name: "Video editor", ok: true, message: (ff as any).source === "bundled" ? "Using the built-in video editor." : "Using this computer's ffmpeg." }
+      : { name: "Video editor", ok: false, message: "The video editor is missing.", fix: `Run the start script again (it reinstalls it), or install ffmpeg. (${(ff as any).error})` },
   );
 
   const w = workerState();

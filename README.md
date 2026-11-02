@@ -4,13 +4,13 @@ Type what you want → press **GENERATE VIDEOS** → get finished vertical short
 
 ## Run it
 
-```bash
-npm install
-cp .env.example .env.local   # optional: add API keys
-npm run build && npm start   # http://localhost:3000
-```
+1. Install **Node.js** (version 20 or newer) from https://nodejs.org. This is the only thing you install.
+2. Double-click **Start Content Factory**: `.command` on Mac, `.bat` on Windows. Or run `npm run go` in a terminal.
 
-Needs **ffmpeg** installed (`brew install ffmpeg` / `apt install ffmpeg`).
+The first run installs everything and builds the app (a few minutes). After that it starts in seconds and opens your browser. Keep the window open while you use it; close it to stop.
+
+You don't need ffmpeg. A video editor is bundled, and the app uses your own ffmpeg if you have one.
+On Mac, the first time you may need to right-click the `.command` file → Open.
 
 You don't need any keys to start. With no keys the app runs in **practice mode**: offline template writer, robot voice, and title-card visuals. Each card says 🧪 Practice quality.
 

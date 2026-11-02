@@ -79,25 +79,34 @@ export const offlineImage: ImageProvider = {
     const dark = /dark|night|grain|horror|creepy|shadow|cold light/i.test(format.visualStyle);
     const c1 = dark ? hsl(hue, 50, 20) : hsl(hue, 70, 52);
     const c2 = dark ? hsl((hue + 30) % 360, 30, 4) : hsl((hue + 40) % 360, 75, 30);
-    const label = wrap(search.toUpperCase().slice(0, 48), 16).slice(0, 3).join("\n");
-    const lbl = outPath + ".label.txt";
-    await fs.writeFile(lbl, label);
-    const e = (p: string) => p.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
+    const label = wrap(search.toUpperCase().slice(0, 42), 13).slice(0, 3);
+    // text is drawn with the subtitle engine (works in every ffmpeg build, unlike drawtext)
+    const ass = outPath + ".label.ass";
     const font = env().CAPTION_FONT || "Poppins";
+    await fs.writeFile(
+      ass,
+      `[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\n\n[V4+ Styles]\n` +
+        `Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV\n` +
+        `Style: L,${font},124,&H22FFFFFF,&H00000000,&H00000000,0,0,1,0,0,8,90,90,480\n\n[Events]\n` +
+        `Format: Layer, Start, End, Style, Text\nDialogue: 0,0:00:00.00,0:00:05.00,L,${label.map((l) => l.replace(/[{}\\]/g, "")).join("\\N")}\n`,
+    );
+    const e = (p: string) => p.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
     const path = outPath.replace(/\.\w+$/, ".png");
+    const lineY = 480 - 40;
+    const lineY2 = 480 + label.length * 150 + 30;
     await ffmpeg([
       "-f", "lavfi", "-i", `gradients=s=1080x1920:c0=${c1}:c1=${c2}:x0=540:y0=0:x1=540:y1=1920:d=1`,
       "-vf",
       [
         dark ? "noise=alls=22:allf=t" : "noise=alls=6:allf=t",
         dark ? "vignette=PI/3" : "vignette=PI/5",
-        `drawbox=x=140:y=ih*0.22:w=800:h=4:color=white@0.25:t=fill`,
-        `drawtext=font='${font}':textfile='${e(lbl)}':fontsize=84:fontcolor=white@0.8:line_spacing=18:x=(w-tw)/2:y=h*0.25`,
-        `drawbox=x=140:y=ih*0.25+${label.split("\n").length * 102 + 30}:w=800:h=4:color=white@0.25:t=fill`,
+        `drawbox=x=140:y=${lineY}:w=800:h=4:color=white@0.3:t=fill`,
+        `drawbox=x=140:y=${lineY2}:w=800:h=4:color=white@0.3:t=fill`,
+        `ass=filename='${e(ass)}'`,
       ].join(","),
       "-frames:v", "1", path,
     ]);
-    await fs.rm(lbl, { force: true });
+    await fs.rm(ass, { force: true });
     return { cost: 0, path };
   },
 };

@@ -30,6 +30,7 @@ export default function Home() {
   const [last, setLast] = useState<Last>({});
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pickStyle, setPickStyle] = useState(false);
   const { data: formats } = usePoll<F[]>("/api/formats", 0, false);
   const { data: health } = usePoll<{ offlineMode: boolean; ok: boolean }>("/api/health", 0, false);
   const { data: recent } = usePoll<any[]>("/api/projects", 0, false);
@@ -58,6 +59,10 @@ export default function Home() {
   async function go() {
     if (!text.trim()) return toast("Type what you want to make first ✍️", true);
     setBusy(true);
+    // so we can ping you when the videos are ready (only asks once)
+    try {
+      if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+    } catch {}
     try {
       const { id } = await api<{ id: string }>("/api/projects", {
         body: { request: text, formatId: auto ? "auto" : format?.id, count: last.count || null, lengthSec: last.lengthSec || null, language: last.language || "English" },
@@ -96,11 +101,27 @@ export default function Home() {
         </div>
       )}
 
-      <div style={{ marginTop: 26 }}>
-        <label className="lbl">Style</label>
+      {/* one line by default; tap to change */}
+      <div style={{ marginTop: 22 }} className="row">
+        <span className="lbl" style={{ margin: 0 }}>Style:</span>
+        <button className="chip on" onClick={() => setPickStyle(!pickStyle)} disabled={!formats}>
+          {format ? `${format.emoji} ${format.name}` : "…"}
+          {auto && <span className="small" style={{ opacity: 0.7 }}>&nbsp;(picked for you)</span>}
+          <span className="small" style={{ opacity: 0.7 }}>&nbsp;{pickStyle ? "▴" : "Change ▾"}</span>
+        </button>
+      </div>
+      {pickStyle && (
+      <div style={{ marginTop: 12 }}>
         <div className="chips">
           {formats && (
-            <button className={"chip" + (auto ? " on" : "")} onClick={() => setLast({ ...last, formatId: "auto" })} title="Picks the style from what you typed">
+            <button
+              className={"chip" + (auto ? " on" : "")}
+              onClick={() => {
+                setLast({ ...last, formatId: "auto" });
+                setPickStyle(false);
+              }}
+              title="Picks the style from what you typed"
+            >
               ✨ Auto
             </button>
           )}
@@ -108,15 +129,19 @@ export default function Home() {
             <button
               key={f.id}
               className={"chip" + (!auto && format?.id === f.id ? " on" : "")}
-              onClick={() => setLast({ ...last, formatId: f.id })}
+              onClick={() => {
+                setLast({ ...last, formatId: f.id });
+                setPickStyle(false);
+              }}
               title={f.description}
             >
               {f.emoji} {f.name}
             </button>
           ))}
-          {!formats && <span className="dim">Loading styles…</span>}
         </div>
+        {format && <p className="small dim" style={{ margin: "8px 0 0" }}>{format.emoji} {format.name}: {format.description}</p>}
       </div>
+      )}
 
       <details style={{ marginTop: 16 }}>
         <summary>More options</summary>
@@ -158,12 +183,12 @@ export default function Home() {
       {health?.offlineMode && (
         <div className="banner warn" style={{ marginTop: 18 }}>
           <span>🧪</span>
-          <span className="small">
-            <b>Practice mode.</b> No AI keys yet, so videos use a robot voice and simple title cards.{" "}
-            <Link href="/system#connect" style={{ textDecoration: "underline" }}>
-              Connect AI
-            </Link>
+          <span className="small" style={{ flex: 1, minWidth: 200 }}>
+            <b>Practice mode:</b> robot voice + simple title cards. Connect AI for real voices and pictures.
           </span>
+          <Link href="/connect" className="btn small">
+            🔌 Connect AI
+          </Link>
         </div>
       )}
 

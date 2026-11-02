@@ -1,7 +1,6 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ConnectAI } from "@/components/ConnectAI";
 import { ago, api, money, usePoll, useUi } from "@/components/ui";
 
 const CAP: Record<string, string> = { llm: "🧠 Writer", voice: "🎙 Voice", image: "👁 Visuals", captions: "💬 Captions", music: "🎵 Music" };
@@ -148,7 +147,9 @@ export default function System() {
               <b className="small">{w.message}</b>
             </div>
           ))}
-          <ConnectAI onChange={reloadH} />
+          <Link href="/connect" className="btn primary">
+            🔌 Manage AI keys
+          </Link>
           {h.warnings.filter((w: any) => w.level === "info").map((w: any, i: number) => (
             <p key={i} className="small dim">
               {w.message} {w.fix}

@@ -2,7 +2,7 @@ import { key as apiKey } from "../../keys";
 import fs from "node:fs/promises";
 import { env } from "../../env";
 import { httpError, ProviderError } from "../../errors";
-import { ffmpeg } from "../../ffmpeg";
+import { bins, ffmpeg, run } from "../../ffmpeg";
 import { PRICE } from "../pricing";
 import type { VoiceProvider } from "../types";
 
@@ -66,7 +66,10 @@ export const openaiVoice: VoiceProvider = {
   },
 };
 
-/** Built-in robot voice via ffmpeg's flite. English only, but always works. */
+/**
+ * Built-in robot voice (no API). Uses ffmpeg's flite when available, otherwise the
+ * computer's own voice: macOS "say", Windows speech, Linux espeak-ng/espeak.
+ */
 export const offlineVoice: VoiceProvider = {
   id: "offline-voice",
   label: "Robot voice (offline)",
@@ -75,14 +78,53 @@ export const offlineVoice: VoiceProvider = {
   available: () => true,
   async speak({ text, outPath }) {
     const txt = outPath + ".txt";
-    await fs.writeFile(txt, text.replace(/[—–]/g, ", "));
-    const esc = txt.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
-    await ffmpeg([
-      "-f", "lavfi", "-i", `flite=textfile='${esc}':voice=awb`,
-      "-af", "asetrate=16000*0.94,aresample=44100,atempo=1.0,lowpass=6000,volume=1.6",
-      "-c:a", "libmp3lame", "-b:a", "128k", outPath,
-    ]);
-    await fs.rm(txt, { force: true });
+    const clean = text.replace(/[—–]/g, ", ");
+    await fs.writeFile(txt, clean);
+    try {
+      const b = await bins();
+      const raw = outPath + ".raw.wav";
+      if (b.flite) {
+        const esc = txt.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
+        await ffmpeg(["-f", "lavfi", "-i", `flite=textfile='${esc}':voice=awb`, raw]);
+      } else await osVoice(txt, raw);
+      await ffmpeg([
+        "-i", raw,
+        "-af", "aresample=44100,loudnorm=I=-16:TP=-1.5",
+        "-c:a", "libmp3lame", "-b:a", "128k", outPath,
+      ]);
+      await fs.rm(raw, { force: true });
+    } finally {
+      await fs.rm(txt, { force: true });
+    }
     return { cost: 0, units: text.length };
   },
 };
+
+async function osVoice(txtFile: string, wavOut: string) {
+  const fail = () =>
+    new ProviderError("missing_key", "No offline voice on this computer (no flite, say, Windows speech or espeak).", {
+      provider: "offline-voice",
+    });
+  if (process.platform === "darwin") {
+    await run("say", ["-f", txtFile, "-o", wavOut, "--file-format=WAVE", "--data-format=LEI16@22050"], 120_000).catch(() => {
+      throw fail();
+    });
+    return;
+  }
+  if (process.platform === "win32") {
+    const ps = `Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.SetOutputToWaveFile('${wavOut.replace(/'/g, "''")}'); $s.Speak([IO.File]::ReadAllText('${txtFile.replace(/'/g, "''")}')); $s.Dispose()`;
+    await run("powershell", ["-NoProfile", "-Command", ps], 120_000).catch(() => {
+      throw fail();
+    });
+    return;
+  }
+  for (const bin of ["espeak-ng", "espeak"]) {
+    try {
+      await run(bin, ["-s", "155", "-w", wavOut, "-f", txtFile], 120_000);
+      return;
+    } catch {
+      /* try next */
+    }
+  }
+  throw fail();
+}

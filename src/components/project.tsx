@@ -181,13 +181,25 @@ export function VideoCard({
             ⬇ DOWNLOAD
           </a>
         )}
-        <div className="row" style={{ gap: 8 }}>
+        <div className="row" style={{ gap: 6, flexWrap: "nowrap" }}>
           {script && (
-            <button className="btn small" style={{ flex: 1 }} onClick={() => setEdit(true)} disabled={busy}>
+            <button className="btn small tight" onClick={() => setEdit(true)} disabled={busy}>
               ✏️ Edit
             </button>
           )}
-          <button className="btn small" style={{ flex: 1 }} onClick={() => setMore(true)} disabled={busy}>
+          {final && script && (
+            <button
+              className="btn small tight"
+              title="Copy the post caption + hashtags"
+              onClick={() => {
+                navigator.clipboard.writeText(`${script.caption}\n\n${script.hashtags.join(" ")}`);
+                toast("Caption copied 📋");
+              }}
+            >
+              📋 Copy
+            </button>
+          )}
+          <button className="btn small tight" onClick={() => setMore(true)} disabled={busy}>
             ⋯ More
           </button>
         </div>

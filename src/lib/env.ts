@@ -42,8 +42,6 @@ export function env(): Env {
 }
 
 export const dataDir = () => path.resolve(env().DATA_DIR || path.join(process.cwd(), "data"));
-export const ffmpegBin = () => env().FFMPEG_PATH || "ffmpeg";
-export const ffprobeBin = () => env().FFPROBE_PATH || "ffprobe";
 export const useSupabase = () => !!(env().SUPABASE_URL && env().SUPABASE_SERVICE_ROLE_KEY);
 
 /** Human-readable config problems for the System Health page. */
