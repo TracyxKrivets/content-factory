@@ -13,7 +13,7 @@ async function seed(userId: string) {
       ...rest,
       id: `${userId}-${key}`,
       userId,
-      isDefault: i === 1, // Napolitan is the default starter
+      isDefault: i === 0, // "Blank" is the default starter
       isStarter: true,
       createdAt: new Date(Date.parse(t) + i).toISOString(),
       updatedAt: t,
@@ -48,7 +48,7 @@ export async function getDefaultFormat(userId = LOCAL_USER) {
 
 export async function createFormat(input: Partial<Format>, userId = LOCAL_USER) {
   const t = now();
-  const base = STARTER_FORMATS[1];
+  const base = STARTER_FORMATS[0];
   const f: Format = {
     name: "My Format",
     emoji: "✨",
@@ -58,7 +58,7 @@ export async function createFormat(input: Partial<Format>, userId = LOCAL_USER) 
     visualStyle: base.visualStyle,
     voiceStyle: base.voiceStyle,
     captionStyle: "bold-yellow",
-    musicStyle: "dark-drone",
+    musicStyle: "chill-pad",
     lengthSec: 45,
     ...sanitize(input),
     id: uid(),

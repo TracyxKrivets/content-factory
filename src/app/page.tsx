@@ -9,9 +9,9 @@ type F = { id: string; name: string; emoji: string; isDefault: boolean; lengthSe
 type Last = { formatId?: string; count?: number; lengthSec?: number; language?: string };
 
 const EXAMPLES = [
-  "Make 10 terrifying Napolitan horror shorts about an apartment building.",
-  "Make 5 rules horror shorts about working the night shift at a hospital.",
-  "Make 3 Asian urban legend shorts about school bathrooms.",
+  "Make 10 did-you-know shorts about the ocean.",
+  "Make 5 top 5 list videos about budget travel hacks.",
+  "Make 3 storytime shorts about a first day at a new job.",
 ];
 const LANGS = ["English", "Korean", "Spanish", "Japanese", "Chinese", "Portuguese", "French", "German"];
 

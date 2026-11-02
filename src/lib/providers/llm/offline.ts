@@ -31,157 +31,150 @@ export function subjectOf(request: string) {
 }
 
 const ANGLES = [
-  "the night shift", "the fourth floor", "the new neighbor", "the elevator", "the maintenance notice",
-  "the lost and found", "the 3:33 AM rule", "the knocking", "the basement", "the mail room",
-  "the stairwell lights", "the intercom", "the window across the street", "the missing room number",
-  "the guest list", "the second staircase", "the quiet hours", "the welcome letter",
+  "the part nobody talks about", "the biggest myth", "a beginner mistake", "the surprising origin",
+  "what experts know", "the weirdest example", "the hidden cost", "why it actually works",
+  "the one rule", "a real example", "the fastest way", "what changed everything",
+  "the secret detail", "the common mistake", "the untold story", "the best-kept secret",
+  "the first thing to know", "the big comeback",
 ];
 
-type Family = "rules" | "notice" | "broadcast" | "file" | "story";
+type Family = "generic" | "facts" | "list" | "story" | "motivation" | "product" | "scary";
 function family(f: Format): Family {
   const n = (f.name + " " + f.structure).toLowerCase();
-  if (n.includes("rule")) return "rules";
-  if (n.includes("napolitan") || n.includes("notice")) return "notice";
-  if (n.includes("analog") || n.includes("broadcast")) return "broadcast";
-  if (n.includes("scp") || n.includes("containment")) return "file";
-  return "story";
+  if (/countdown|top \d|list/.test(n)) return "list";
+  if (/fact|did you know/.test(n)) return "facts";
+  if (/scary|horror|creepy|unsettling/.test(n)) return "scary";
+  if (/storytime|first-person|story/.test(n)) return "story";
+  if (/motivation|mindset|hard truth/.test(n)) return "motivation";
+  if (/product|call to action/.test(n)) return "product";
+  return "generic";
 }
 
-const POOLS: Record<Family, { hook: string[]; mid: string[]; end: string[] }> = {
-  rules: {
-    hook: ["Rule one. If you hear your name called from {A}, do not answer.", "Rule one. Never take {A} after midnight."],
+const POOLS: Record<Exclude<Family, "list">, { hook: string[]; mid: string[]; end: string[] }> = {
+  generic: {
+    hook: ["Here's what nobody tells you about {S}.", "Most people get {S} wrong. Here's {A}."],
     mid: [
-      "Rule two. The {S} has eleven floors. If the panel shows twelve, step out and wait.",
-      "Rule three. Staff wear blue lanyards. Nobody here wears red. If you see red, look down.",
-      "Rule four. Lights flicker three times before a check. Stand still until they stop.",
-      "Rule five. If a coworker asks you which rule you're on, say rule two. Always rule two.",
-      "Rule six. The cameras show one more person than is actually in the building. That's normal.",
-      "Rule seven. Forget rule four. Rule four was added by someone who no longer works here.",
-      "Rule eight. If you smell smoke and there's no alarm, there is no fire. Go back to your post.",
-      "Rule nine. Do not count the doors on the way out.",
-      "Rule ten. If you hear typing from an empty office, finish your shift early. It's covering for you.",
+      "It starts with something simple that almost everyone overlooks.",
+      "Once you notice it, you'll start seeing it everywhere.",
+      "The reason behind it is surprisingly practical.",
+      "Here's a quick example that makes it click.",
+      "And this is exactly where most people give up.",
+      "But the ones who stick with it see a huge difference.",
+      "The trick is to focus on one small thing first.",
+      "That one change makes everything after it easier.",
     ],
-    end: [
-      "Last rule. If you've already broken one, you'll know, because this list will look different tomorrow.",
-      "Final rule. Read this list again from the top. Notice anything missing?",
-    ],
+    end: ["Now you know more about {S} than most people. Follow for part two.", "Save this so you remember it next time {S} comes up."],
   },
-  notice: {
-    hook: [
-      "Welcome to the {S}. Please read this notice about {A} carefully. Your safety depends on it.",
-      "Attention residents of the {S}. A small update regarding {A}.",
-    ],
+  facts: {
+    hook: ["Did you know this about {S}? It sounds fake, but it's true.", "This one fact about {S} changes how you see it."],
     mid: [
-      "Quiet hours are from ten PM to six AM. During quiet hours, do not respond to any knocking. Residents do not knock.",
-      "The building manager is a tall man in a grey suit. We do not have a building manager.",
-      "If your hallway is longer than usual, keep walking. Do not turn around.",
-      "Packages left at your door after midnight were not delivered by us. Do not open them. Do not bring them inside.",
-      "Your neighbor in unit 4B moved out last year. If they greet you, smile and keep moving.",
-      "The elevator may stop at a floor with no lights. Do not step out, even if someone calls your name.",
-      "Please make sure your door is locked. Then check again. It will try once more around three.",
-      "If you see this notice taped to the inside of your door, you did not put it there.",
-      "Residents who follow these rules report a pleasant stay.",
+      "Scientists only figured this out surprisingly recently.",
+      "It all comes down to one simple reason.",
+      "And it's not the only strange thing about {S}.",
+      "Here's a detail most people have never heard.",
+      "It happens far more often than you'd think.",
+      "People have been getting this wrong for years.",
+      "Once you know why, it actually makes perfect sense.",
     ],
-    end: [
-      "Thank you for your cooperation. We'll see you soon. We always do. Welcome to the {S}.",
-      "This notice will repeat. If it does, start from the beginning. Welcome to the {S}.",
-    ],
-  },
-  broadcast: {
-    hook: [
-      "This is an emergency broadcast. Residents near the {S} must stay indoors. Do not look at {A}.",
-      "Tape recovered. Date unknown. Subject: the {S}. Playback begins now.",
-    ],
-    mid: [
-      "Cover all windows facing the street. Do not open the door for emergency services. We have not sent any.",
-      "If you hear this message in a voice you recognize, turn off your television immediately.",
-      "Reports confirm the {S} now appears on maps where it did not exist yesterday.",
-      "Count the members of your household. If the number is higher than it should be, do not say so out loud.",
-      "The following image is not a test pattern. Do not stare at it for longer than four seconds.",
-      "This broadcast was recorded seven hours from now.",
-      "Remain calm. It responds to fear the way a dog responds to its name.",
-      "Signal interference detected. If the announcer's face appears on your screen, it is not the announcer.",
-    ],
-    end: [
-      "This message will repeat. This message will repeat. This message will—",
-      "End of broadcast. If you are still watching, it already knows your address.",
-    ],
-  },
-  file: {
-    hook: [
-      "Item: the {S}. Object class: Keter. Do not enter {A} under any circumstances.",
-      "File seven three nine. The {S}. Containment requires that {A} remain sealed at all times.",
-    ],
-    mid: [
-      "Containment procedures: no personnel may remain inside for longer than forty minutes.",
-      "Description: the structure contains more rooms on the inside than its outer walls allow.",
-      "Personnel report hearing their own voice from adjacent rooms, giving instructions they never gave.",
-      "Incident log, day four: a researcher entered the third floor. She exited from the basement eleven hours later.",
-      "She described the trip as taking roughly thirty seconds.",
-      "Floor plans drawn inside the structure never match floor plans drawn outside it.",
-      "Do not attempt to communicate with residents. There are no residents.",
-      "Testing has been suspended after the anomaly began requesting specific researchers by name.",
-    ],
-    end: [
-      "Final note: the anomaly has requested your clearance level. Access to this file has been logged.",
-      "Addendum: the rest of this file has been redacted. By the {S}.",
-    ],
+    end: ["But the strangest part about {S}? Follow and I'll tell you next time.", "Tell someone this today and watch their reaction."],
   },
   story: {
-    hook: [
-      "I knew something was wrong at the {S} the night I found {A}.",
-      "The thing in the {S} is still there. I need to tell you about {A} before it's too late.",
-    ],
+    hook: ["I still can't believe what happened with {S}.", "This is the story of {A}, and it still gets me."],
     mid: [
-      "It started small. A door I'd locked was open. My keys were on the wrong hook.",
-      "My neighbor said nobody had lived in the unit above me for years. I heard footsteps every night.",
-      "At exactly three thirty three, the footsteps stopped, and something started breathing at my door.",
-      "I checked the peephole. The hallway was empty, but the breathing kept going.",
-      "The next morning, every photo on my phone from that night had a figure in the background.",
+      "It was a completely normal day. Nothing seemed off.",
+      "Then one small thing caught my attention.",
+      "I tried to ignore it, but it kept happening.",
+      "So I decided to find out what was going on.",
+      "What I found was not what I expected at all.",
+      "Everyone around me had known the whole time.",
+      "And nobody had said a word.",
+    ],
+    end: ["I see {S} completely differently now.", "Part two is even crazier. Follow so you don't miss it."],
+  },
+  motivation: {
+    hook: ["Nobody is coming to save you. Not with {S}, not with anything.", "If {S} feels hard right now, listen to this."],
+    mid: [
+      "Most people wait until they feel ready. They never do.",
+      "Discipline beats motivation every single time.",
+      "You don't need a perfect plan. You need a first step.",
+      "The people you admire were once exactly where you are.",
+      "Every day you show up, you get a little harder to stop.",
+      "Stop counting the days. Make the days count.",
+    ],
+    end: ["Start today. Your future self is watching.", "Save this for the day you want to quit."],
+  },
+  product: {
+    hook: ["Tired of struggling with {S}? This changes everything.", "If you care about {S}, you need to see this."],
+    mid: [
+      "Here's the problem. Most options are overpriced and overcomplicated.",
+      "This one is different.",
+      "First, it's ridiculously easy to use.",
+      "Second, it saves you time every single day.",
+      "Third, it's built to last.",
+      "It's perfect if you want results without the hassle.",
+    ],
+    end: ["Check the link in my bio and see for yourself.", "Comment if you want the full breakdown."],
+  },
+  scary: {
+    hook: ["I knew something was wrong with {S} the night I found {A}.", "There's a rule about {S}. Never break it."],
+    mid: [
+      "It started small. A door I'd locked was open.",
+      "Nobody had lived upstairs for years. I heard footsteps every night.",
+      "At exactly three thirty three, the footsteps stopped.",
+      "Then something started breathing on the other side of my door.",
+      "Every photo from that night had a figure in the background.",
       "Closer in every one.",
-      "I asked the old woman downstairs. She just said, you must have answered it.",
-      "I don't remember answering anything. But my door was unlocked from the inside.",
+      "I don't remember opening the door. But it was unlocked from the inside.",
     ],
-    end: [
-      "I moved out last week. Last night, I heard footsteps above my new apartment.",
-      "I'm telling you this so you'll recognize it. It's on its way to you next.",
-    ],
+    end: ["I moved out last week. Last night, I heard footsteps again.", "I'm telling you so you'll recognize it. It's coming to you next."],
   },
 };
+
+const LIST_ITEMS = [
+  "the hidden gem. It's better than it has any right to be.",
+  "the classic. It still holds up after all these years.",
+  "the underrated one. Almost nobody talks about it.",
+  "the one that went viral, and honestly, for good reason.",
+  "the one experts swear by.",
+  "the surprise pick. You won't see it coming.",
+];
+const NUM = ["One", "Two", "Three", "Four", "Five"];
 
 function writeScript(input: { idea: string; angle?: string; format: Format; lengthSec: number; request?: string }): Script {
   const r = rng(input.idea + input.format.name);
   const S = subjectOf(input.request || input.idea);
   const pick = ANGLES[Math.floor(r() * ANGLES.length)];
   const A = input.angle && input.angle.length <= 40 && !/^make\b/i.test(input.angle) ? input.angle : pick;
-  const pool = POOLS[family(input.format)];
-  const fill = (s: string) => s.replaceAll("{S}", S).replaceAll("{A}", A);
+  const fam = family(input.format);
+  const fill = (x: string) => x.replaceAll("{S}", S).replaceAll("{A}", A);
   const target = Math.round(input.lengthSec * 2.5);
-  const nMid = Math.max(3, Math.min(pool.mid.length, Math.round(target / 13) - 2));
-  const lines = [
-    fill(pool.hook[Math.floor(r() * pool.hook.length)]),
-    ...shuffle(pool.mid, r).slice(0, nMid).map(fill),
-    fill(pool.end[Math.floor(r() * pool.end.length)]),
-  ];
-  if (family(input.format) === "rules") {
-    // keep numbered rules in order
-    const mids = lines.slice(1, -1).sort((a, b) => order(a) - order(b));
-    lines.splice(1, mids.length, ...mids);
+  let lines: string[];
+  if (fam === "list") {
+    const items = shuffle(LIST_ITEMS, r).slice(0, 5);
+    lines = [
+      fill("Here are the top five {S} you need to know. Number one will surprise you."),
+      ...items.map((it, i) => `Number ${NUM[4 - i].toLowerCase()}: ${it}`),
+      "Which one would you pick? Tell me in the comments.",
+    ];
+  } else {
+    const pool = POOLS[fam];
+    const nMid = Math.max(3, Math.min(pool.mid.length, Math.round(target / 12) - 2));
+    lines = [
+      fill(pool.hook[Math.floor(r() * pool.hook.length)]),
+      ...shuffle(pool.mid, r).slice(0, nMid).map(fill),
+      fill(pool.end[Math.floor(r() * pool.end.length)]),
+    ];
   }
   const title = `${cap(S)}: ${cap(A)}`;
+  const tag = (x: string) => "#" + x.toLowerCase().replace(/[^a-z0-9]/g, "");
   return {
     title,
     hook: lines[0],
     lines,
-    caption: `${title}. Would you have followed the rules?`,
-    hashtags: ["#horror", "#scary", "#creepy", "#" + input.format.name.toLowerCase().replace(/[^a-z]/g, "")],
+    caption: `${title}. What do you think?`,
+    hashtags: ["#fyp", ...(fam === "generic" ? [] : [tag(input.format.name)]), tag(S.split(" ").slice(-1)[0] || "shorts")].filter((h) => h.length > 1),
   };
 }
-const NUM = ["two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
-const order = (s: string) => {
-  const m = s.toLowerCase().match(/^rule (\w+)/);
-  return m ? NUM.indexOf(m[1]) : 99;
-};
 const cap = (s: string) => s.replace(/\b\w/g, (c) => c.toUpperCase());
 
 const STOP = new Set("the a an of to in on at and or is are was it if you your do not with for from that this be by as".split(" "));
@@ -221,7 +214,7 @@ export const offlineLlm: LlmProvider = {
         out = {
           scenes: (i.lines as string[]).map((l) => ({
             visual: `${l} ${i.format?.visualStyle || ""}`.slice(0, 300),
-            search: keywords(l, i.format?.visualStyle || "dark hallway"),
+            search: keywords(l, i.format?.visualStyle || "city street"),
           })),
         };
         break;

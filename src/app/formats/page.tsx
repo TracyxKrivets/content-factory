@@ -6,13 +6,15 @@ import type { Format } from "@/lib/types";
 const CAPTIONS: [Format["captionStyle"], string][] = [
   ["bold-yellow", "Bold yellow"],
   ["clean-white", "Clean white"],
-  ["horror-red", "Horror red"],
+  ["red-highlight", "Red highlight"],
   ["glitch", "Glitch"],
 ];
 const MUSIC: [Format["musicStyle"], string][] = [
-  ["dark-drone", "Dark drone"],
-  ["eerie-tone", "Eerie tone"],
-  ["tense-pulse", "Tense pulse"],
+  ["chill-pad", "Chill"],
+  ["upbeat-pulse", "Upbeat"],
+  ["tense-pulse", "Dramatic"],
+  ["dark-drone", "Dark"],
+  ["eerie-tone", "Eerie"],
   ["none", "No music"],
 ];
 

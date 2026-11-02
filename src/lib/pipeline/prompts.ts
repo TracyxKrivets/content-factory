@@ -19,7 +19,7 @@ JSON: {"ideas":[{"title":"max 8 words","angle":"one sentence"}]}`,
 
 function scriptSystem(format: Format, language: string) {
   return `You write viral ${format.name} narration scripts for TikTok, Reels and Shorts.
-Rules: line 1 is the hook and must grab in 2 seconds. No intro, no greeting, no "today". Every line escalates. End on a twist or a line that loops back to the start. Spoken words only, no stage directions or emojis. Write in ${language}.`;
+Rules: line 1 is the hook and must grab in 2 seconds. No intro, no greeting, no "today". Every line adds something new and keeps momentum. End with a payoff: a twist, punchline, takeaway or a line that loops back to the start. Spoken words only, no stage directions or emojis. Write in ${language}.`;
 }
 
 function scriptSpec(format: Format, lengthSec: number) {
@@ -54,10 +54,10 @@ ${scriptSpec(o.format, o.lengthSec)}`,
 
 export function checkPrompt(script: Script, lengthSec: number) {
   return {
-    system: "You are a strict short-form horror script editor. Reply with JSON only.",
+    system: "You are a strict short-form video script editor. Reply with JSON only.",
     prompt: `Target: ${lengthSec}s spoken.
 ${script.lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}
-Score 1-10: hook (grabs in 2s), pacing, escalation, ending (twist or loop). List concrete fixes. pass=true only if every score >= 7.
+Score 1-10: hook (grabs in 2s), pacing, escalation (keeps momentum), ending (strong payoff). List concrete fixes. pass=true only if every score >= 7.
 JSON: {"hook":0,"pacing":0,"escalation":0,"ending":0,"issues":["..."],"pass":true}`,
     maxTokens: 300,
   };
@@ -65,7 +65,7 @@ JSON: {"hook":0,"pacing":0,"escalation":0,"ending":0,"issues":["..."],"pass":tru
 
 export function scenesPrompt(lines: string[], format: Format) {
   return {
-    system: "You write image prompts for vertical horror videos. Reply with JSON only.",
+    system: "You write image prompts for vertical short-form videos. Reply with JSON only.",
     prompt: `Visual style: ${format.visualStyle}
 For each numbered line write one image prompt (max 30 words: concrete subject, setting, lighting; same style throughout; no text in image; no two alike) and 2-4 stock photo search keywords.
 ${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}

@@ -56,7 +56,7 @@ export const openaiVoice: VoiceProvider = {
         model: env().OPENAI_TTS_MODEL || "gpt-4o-mini-tts",
         voice: env().OPENAI_TTS_VOICE || "onyx",
         input: text,
-        instructions: `Speak in a ${style} tone. Short-form horror narration. Clear, with tension.`,
+        instructions: `Speak in a ${style} tone. Short-form video narration: clear, engaging, well-paced.`,
         response_format: "mp3",
       }),
     });

@@ -7,7 +7,7 @@ import type { CaptionStyle } from "../types";
 const STYLES: Record<CaptionStyle, { size: number; primary: string; hi: string; outline: number; shadow: number; back: string; upper: boolean }> = {
   "bold-yellow": { size: 112, primary: "&H00FFFFFF", hi: "&H0000E5FF", outline: 7, shadow: 0, back: "&H80000000", upper: true },
   "clean-white": { size: 96, primary: "&H00FFFFFF", hi: "&H00C8F0FF", outline: 4, shadow: 2, back: "&H96000000", upper: false },
-  "horror-red": { size: 108, primary: "&H00FFFFFF", hi: "&H001E1EE6", outline: 6, shadow: 0, back: "&H80000000", upper: true },
+  "red-highlight": { size: 108, primary: "&H00FFFFFF", hi: "&H001E1EE6", outline: 6, shadow: 0, back: "&H80000000", upper: true },
   glitch: { size: 100, primary: "&H00FFFFFF", hi: "&H00FFFF00", outline: 3, shadow: 5, back: "&H500000FF", upper: true },
 };
 
@@ -36,7 +36,7 @@ export function chunkWords(words: WordTiming[]) {
 }
 
 export function buildAss(words: WordTiming[], style: CaptionStyle) {
-  const s = STYLES[style] || STYLES["bold-yellow"];
+  const s = STYLES[(style as string) === "horror-red" ? "red-highlight" : style] || STYLES["bold-yellow"];
   const font = env().CAPTION_FONT || "Poppins";
   const head = `[Script Info]
 ScriptType: v4.00+

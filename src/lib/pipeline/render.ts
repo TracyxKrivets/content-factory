@@ -63,7 +63,7 @@ export const ffmpegRenderer: Renderer = {
     }
     const va = `${n}:a`;
     if (i.musicPath) {
-      f.push(`[${va}]volume=1.0[a0];[${n + 1}:a]volume=0.22[a1];[a0][a1]amix=inputs=2:duration=first:normalize=0,apad[aout]`);
+      f.push(`[${va}]volume=1.0[a0];[${n + 1}:a]volume=0.3[a1];[a0][a1]amix=inputs=2:duration=first:normalize=0,apad[aout]`);
     } else f.push(`[${va}]apad[aout]`);
 
     args.push(

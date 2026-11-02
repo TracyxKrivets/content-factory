@@ -35,6 +35,12 @@ Accounts switch on automatically: log in / sign up, and every user sees only the
 
 Without Supabase, everything saves to `./data` on the server and there's no login (single user). Projects made in single-user mode don't carry over to accounts.
 
+## Formats
+
+Nothing is genre-specific. **Blank** is the default: the AI just follows your request.
+Starter formats (edit or delete freely): Did You Know, Top 5 List, Storytime, Motivation, Product Spotlight, Scary Story.
+With style set to **✨ Auto**, the app picks a format from your words ("did you know…", "top 5…", "scary…"). Anything else uses Blank.
+
 ## Deploy
 
 Use the `Dockerfile` on Railway, Render, Fly.io or a VPS. Vercel won't work, because rendering needs ffmpeg and long-running jobs.

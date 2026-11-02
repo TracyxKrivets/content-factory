@@ -75,8 +75,10 @@ export const offlineImage: ImageProvider = {
   async generate({ search, text, format, outPath }) {
     const h = parseInt(hash(format.visualStyle, search).slice(0, 6), 16);
     const hue = h % 360;
-    const c1 = hsl(hue, 50, 20);
-    const c2 = hsl((hue + 30) % 360, 30, 4);
+    // moody cards only when the format's look is dark; otherwise bright and colorful
+    const dark = /dark|night|grain|horror|creepy|shadow|cold light/i.test(format.visualStyle);
+    const c1 = dark ? hsl(hue, 50, 20) : hsl(hue, 70, 52);
+    const c2 = dark ? hsl((hue + 30) % 360, 30, 4) : hsl((hue + 40) % 360, 75, 30);
     const label = wrap(search.toUpperCase().slice(0, 48), 16).slice(0, 3).join("\n");
     const lbl = outPath + ".label.txt";
     await fs.writeFile(lbl, label);
@@ -87,8 +89,8 @@ export const offlineImage: ImageProvider = {
       "-f", "lavfi", "-i", `gradients=s=1080x1920:c0=${c1}:c1=${c2}:x0=540:y0=0:x1=540:y1=1920:d=1`,
       "-vf",
       [
-        "noise=alls=22:allf=t",
-        "vignette=PI/3",
+        dark ? "noise=alls=22:allf=t" : "noise=alls=6:allf=t",
+        dark ? "vignette=PI/3" : "vignette=PI/5",
         `drawbox=x=140:y=ih*0.22:w=800:h=4:color=white@0.25:t=fill`,
         `drawtext=font='${font}':textfile='${e(lbl)}':fontsize=84:fontcolor=white@0.8:line_spacing=18:x=(w-tw)/2:y=h*0.25`,
         `drawbox=x=140:y=ih*0.25+${label.split("\n").length * 102 + 30}:w=800:h=4:color=white@0.25:t=fill`,

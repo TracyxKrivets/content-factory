@@ -80,7 +80,7 @@ export interface Scene {
   search: string; // 2-4 keywords for stock search
 }
 
-export type CaptionStyle = "bold-yellow" | "clean-white" | "horror-red" | "glitch";
+export type CaptionStyle = "bold-yellow" | "clean-white" | "red-highlight" | "glitch";
 
 export interface Format {
   id: string;
@@ -93,7 +93,7 @@ export interface Format {
   visualStyle: string;
   voiceStyle: string;
   captionStyle: CaptionStyle;
-  musicStyle: "none" | "dark-drone" | "tense-pulse" | "eerie-tone";
+  musicStyle: "none" | "chill-pad" | "upbeat-pulse" | "tense-pulse" | "dark-drone" | "eerie-tone";
   lengthSec: number;
   isDefault: boolean;
   isStarter: boolean;
