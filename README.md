@@ -1,5 +1,21 @@
 # Content Factory
 
+## ⚡ Easiest way: just open `Content Factory.html`
+
+Double-click **`Content Factory.html`**. That's it: no install, no server, no start-up.
+Everything runs in your browser (Chrome or Edge recommended): AI calls with your keys, saving, and making the MP4s.
+
+- Want a link you can open anywhere, including your phone? Drag the file onto https://app.netlify.com/drop (rename it `index.html` first).
+- Projects and keys are saved **in that browser**. A different browser or device starts empty.
+- Keep the tab open while videos are being made. If you close it, they pick up where they left off next time you open it.
+- Edit the source in `web/src/`, then run `node web/build.mjs` to rebuild the file.
+
+---
+
+## Server edition (Next.js)
+
+Use this instead if you want background jobs that keep running with the tab closed, logins, and cloud saving.
+
 Type what you want → press **GENERATE VIDEOS** → get finished vertical shorts (1080×1920 MP4 with voice, visuals, captions, background sound).
 
 ## Run it
