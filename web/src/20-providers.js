@@ -118,7 +118,7 @@ const elevenlabsVoice = {
   id: "elevenlabs", label: "ElevenLabs", cap: "voice",
   available: () => !!keys.get("ELEVENLABS_API_KEY"),
   async speak({ text }) {
-    const voice = localStorage.getItem("cf-eleven-voice") || "pNInz6obpgDQGcFmaJgB";
+    const voice = LS.getItem("cf-eleven-voice") || "pNInz6obpgDQGcFmaJgB";
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}?output_format=mp3_44100_128`, {
       method: "POST", signal: timeout(180000),
       headers: { "xi-api-key": keys.get("ELEVENLABS_API_KEY"), "Content-Type": "application/json", Accept: "audio/mpeg" },
@@ -288,7 +288,7 @@ const REGISTRY = {
 const down = new Map(); // circuit breaker: provider -> until
 const isDown = (id) => (down.get(id) || 0) > Date.now();
 function chain(cap, avoid = []) {
-  const order = JSON.parse(localStorage.getItem("cf-order") || "{}")[cap] || [];
+  const order = JSON.parse(LS.getItem("cf-order") || "{}")[cap] || [];
   const all = REGISTRY[cap];
   const rank = (p) => (order.indexOf(p.id) >= 0 ? order.indexOf(p.id) : 100 + all.indexOf(p)) + (isDown(p.id) ? 1000 : 0);
   const usable = all.filter((p) => p.available() && !avoid.includes(p.id)).sort((a, b) => rank(a) - rank(b));

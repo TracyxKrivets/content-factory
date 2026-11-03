@@ -35,8 +35,9 @@ h2 { font-size: 22px; }
 /* nav */
 .nav { display: flex; align-items: center; gap: 6px; padding: 16px 20px; max-width: 1100px; margin: 0 auto; flex-wrap: wrap; }
 .logo { font-family: var(--pixel); font-size: 13px; color: var(--amber); margin-right: 18px; line-height: 1.6; }
-.nav a.link { padding: 10px 16px; border-radius: 12px; color: var(--dim); font-weight: 600; position: relative; }
-.nav a.link:hover, .nav a.link.on { background: var(--bg2); color: var(--text); }
+.nav .link { padding: 10px 16px; border-radius: 12px; color: var(--dim); font-weight: 600; position: relative; background: none; border: 0; cursor: pointer; font-size: inherit; }
+.nav .link:hover, .nav .link.on { background: var(--bg2); color: var(--text); }
+.nav .logo { background: none; border: 0; cursor: pointer; text-align: left; padding: 0; }
 .dot { position: absolute; top: 6px; right: 6px; width: 10px; height: 10px; background: var(--red); border-radius: 50%; }
 
 /* buttons */

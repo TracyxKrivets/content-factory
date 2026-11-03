@@ -42,8 +42,16 @@ function useBlobUrl(key) {
   }, [key]);
   return url;
 }
-function go(hash) {
-  location.hash = hash;
+// Pages switch in code, not by following links: file previewers (Claude app, phone
+// file viewers) often swallow link clicks, which made the menu look dead.
+let setRouteFn = null;
+function go(route) {
+  route = String(route).replace(/^#/, "") || "make";
+  setRouteFn?.(route);
+  window.scrollTo?.(0, 0);
+  try {
+    if (location.hash.slice(1) !== route) history.replaceState(null, "", "#" + route);
+  } catch {}
 }
 async function downloadBlob(blob, name) {
   const a = document.createElement("a");
@@ -84,7 +92,14 @@ function Modal({ onClose, children }) {
 
 // ---------------------------------------------------------------- app shell
 function App() {
-  const [route, setRoute] = useState(location.hash.slice(1) || "make");
+  const [route, setRoute] = useState(() => {
+    try {
+      return location.hash.slice(1) || "make";
+    } catch {
+      return "make";
+    }
+  });
+  setRouteFn = setRoute;
   const [t, setT] = useState(null);
   const [c, setC] = useState(null);
   const timer = useRef();
@@ -95,12 +110,21 @@ function App() {
   };
   confirmFn = (o) => new Promise((resolve) => setC({ ...o, resolve }));
   useEffect(() => {
-    const f = () => {
-      setRoute(location.hash.slice(1) || "make");
-      window.scrollTo(0, 0);
-    };
+    const f = () => setRoute(location.hash.slice(1) || "make");
     addEventListener("hashchange", f);
-    return () => removeEventListener("hashchange", f);
+    // catch clicks on in-app links (href="#…") before anything else can
+    const onClick = (e) => {
+      const a = e.target.closest?.("a[href^='#']");
+      if (!a || e.button !== 0 || e.metaKey || e.ctrlKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      go(a.getAttribute("href"));
+    };
+    window.addEventListener("click", onClick, true);
+    return () => {
+      removeEventListener("hashchange", f);
+      window.removeEventListener("click", onClick, true);
+    };
   }, []);
   // warn before closing while videos are being made (they resume on reopen)
   useEffect(() => {
@@ -126,6 +150,8 @@ function App() {
     name === "system" ? html`<${SystemPage} />` : html`<${HomePage} />`;
   return html`
     <${Nav} route=${name} />
+    ${storageBlocked && html`<div class="wrap"><div class="banner bad" style="margin-top:6px">
+      <span class="small"><b>Nothing will be saved here.</b> This window is blocking storage (it's probably a file preview or private window). Save the file to your computer and open it in Chrome or Edge to keep your work.</span></div></div>`}
     <main class="wrap">${page}</main>
     ${t && html`<div class=${"toast" + (t.bad ? " bad" : "")}>${t.msg}</div>`}
     ${c && html`<${Modal} onClose=${() => close(false)}>
@@ -141,9 +167,9 @@ function Nav({ route }) {
   const errs = useData(() => kv.get("errors", []).then((l) => l.filter((e) => !e.resolved).length));
   useData(async () => keys.all()); // re-render when keys change
   const practice = practiceMode();
-  const L = (r, label, dot) => html`<a href=${"#" + r} class=${"link" + (route === r || (r === "projects" && route === "project") ? " on" : "")}>${label}${dot && html`<span class="dot" style=${dot === "amber" ? "background:var(--amber)" : ""}></span>`}</a>`;
+  const L = (r, label, dot) => html`<button type="button" onClick=${() => go(r)} class=${"link" + (route === r || (r === "projects" && route === "project") ? " on" : "")}>${label}${dot && html`<span class="dot" style=${dot === "amber" ? "background:var(--amber)" : ""}></span>`}</button>`;
   return html`<nav class="nav">
-    <a href="#make" class="logo">CONTENT<br />FACTORY</a>
+    <button type="button" onClick=${() => go("make")} class="logo">CONTENT<br />FACTORY</button>
     ${L("make", "✚ Make")}${L("projects", "📁 Projects")}${L("formats", "📜 Formats")}
     ${L("connect", "🔌 Connect AI", practice && "amber")}${L("system", "⚙ System", errs > 0 && "red")}
   </nav>`;

@@ -6,13 +6,7 @@ async function cleanupFiles() {
   for (const k of all) if (!used.has(k)) await tx("blobs", "readwrite", (o) => req(o.delete(k)));
 }
 (async () => {
-  try {
-    await idb();
-  } catch (e) {
-    document.getElementById("app").innerHTML =
-      '<div class="wrap"><div class="banner bad" style="margin-top:40px">This browser blocked storage (private window?). Open the page in a normal Chrome, Edge or Safari window.</div></div>';
-    return;
-  }
+  await idb(); // falls back to memory if storage is blocked
   const root = document.getElementById("app");
   root.textContent = ""; // remove the "Loading…" placeholder
   render(html`<${App} />`, root);

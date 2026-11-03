@@ -7,7 +7,7 @@ const EXAMPLES = [
 const LANGS = ["English", "Korean", "Spanish", "Japanese", "Chinese", "Portuguese", "French", "German"];
 const loadLS = (k, d) => {
   try {
-    return JSON.parse(localStorage.getItem(k) || "null") ?? d;
+    return JSON.parse(LS.getItem(k) || "null") ?? d;
   } catch {
     return d;
   }
@@ -20,8 +20,8 @@ function HomePage() {
   const [busy, setBusy] = useState(false);
   const formats = useData(listFormats);
   const recent = useData(async () => (await db.all("projects")).filter((p) => !p.deletedAt).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, 3));
-  useEffect(() => localStorage.setItem("cf-draft", JSON.stringify(text)), [text]);
-  useEffect(() => localStorage.setItem("cf-last", JSON.stringify(last)), [last]);
+  useEffect(() => LS.setItem("cf-draft", JSON.stringify(text)), [text]);
+  useEffect(() => LS.setItem("cf-last", JSON.stringify(last)), [last]);
   const auto = !last.formatId || last.formatId === "auto" || !formats?.some((f) => f.id === last.formatId);
   const format = formats ? (auto ? detectFormat(text, formats) : formats.find((f) => f.id === last.formatId)) : null;
   const count = last.count || parseCount(text);
@@ -36,7 +36,7 @@ function HomePage() {
     } catch {}
     try {
       const p = await createProject({ request: text, formatId: auto ? "auto" : format?.id, count: last.count, lengthSec: last.lengthSec, language: last.language });
-      localStorage.removeItem("cf-draft");
+      LS.removeItem("cf-draft");
       go("project-" + p.id);
     } catch (e) {
       toast(e.message, true);
@@ -583,7 +583,7 @@ function ProviderOrder() {
         [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
         const next = { ...order, [cap]: ids };
         setOrder(next);
-        localStorage.setItem("cf-order", JSON.stringify(next));
+        LS.setItem("cf-order", JSON.stringify(next));
         toast("Saved ✓");
       }}>↑</button></div>`)}</div></div>`;
   })}</div>`;

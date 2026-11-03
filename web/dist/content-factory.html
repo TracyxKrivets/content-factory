@@ -44,8 +44,9 @@ h2 { font-size: 22px; }
 /* nav */
 .nav { display: flex; align-items: center; gap: 6px; padding: 16px 20px; max-width: 1100px; margin: 0 auto; flex-wrap: wrap; }
 .logo { font-family: var(--pixel); font-size: 13px; color: var(--amber); margin-right: 18px; line-height: 1.6; }
-.nav a.link { padding: 10px 16px; border-radius: 12px; color: var(--dim); font-weight: 600; position: relative; }
-.nav a.link:hover, .nav a.link.on { background: var(--bg2); color: var(--text); }
+.nav .link { padding: 10px 16px; border-radius: 12px; color: var(--dim); font-weight: 600; position: relative; background: none; border: 0; cursor: pointer; font-size: inherit; }
+.nav .link:hover, .nav .link.on { background: var(--bg2); color: var(--text); }
+.nav .logo { background: none; border: 0; cursor: pointer; text-align: left; padding: 0; }
 .dot { position: absolute; top: 6px; right: 6px; width: 10px; height: 10px; background: var(--red); border-radius: 50%; }
 
 /* buttons */
@@ -2089,6 +2090,30 @@ function ago(iso) {
 }
 const safeName = (s) => String(s).replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-").slice(0, 60) || "video";
 
+// localStorage can be blocked (file previews, private windows): fall back to memory
+const memLS = new Map();
+const LS = {
+  getItem(k) {
+    try {
+      return localStorage.getItem(k);
+    } catch {
+      return memLS.has(k) ? memLS.get(k) : null;
+    }
+  },
+  setItem(k, v) {
+    memLS.set(k, String(v));
+    try {
+      localStorage.setItem(k, v);
+    } catch {}
+  },
+  removeItem(k) {
+    memLS.delete(k);
+    try {
+      localStorage.removeItem(k);
+    } catch {}
+  },
+};
+
 // change bus: UI re-reads after any write
 const bus = new EventTarget();
 let changeTimer = null;
@@ -2100,10 +2125,48 @@ function changed() {
 // ---------------------------------------------------------------- storage (IndexedDB)
 const DB_NAME = "content-factory-web";
 let dbp = null;
+let storageBlocked = false;
+/** Minimal in-memory stand-in for IndexedDB, used when the browser blocks storage. */
+function memoryDb() {
+  const stores = { projects: new Map(), videos: new Map(), formats: new Map(), blobs: new Map(), kv: new Map() };
+  const keyPath = { projects: "id", videos: "id", formats: "id" };
+  const done = (result) => {
+    const r = { result };
+    queueMicrotask(() => r.onsuccess?.());
+    return r;
+  };
+  const store = (name) => {
+    const m = stores[name];
+    return {
+      get: (k) => done(structuredClone(m.get(k))),
+      getAll: () => done([...m.values()].map((v) => structuredClone(v))),
+      getAllKeys: () => done([...m.keys()]),
+      put: (v, k) => (m.set(k !== undefined ? k : v[keyPath[name]], v instanceof Blob ? v : structuredClone(v)), done(undefined)),
+      delete: (k) => (m.delete(k), done(undefined)),
+      index: (field) => ({ getAll: (val) => done([...m.values()].filter((v) => v[field] === val).map((v) => structuredClone(v))) }),
+    };
+  };
+  return {
+    transaction: (name) => {
+      const t = { objectStore: () => store(name) };
+      setTimeout(() => t.oncomplete?.(), 0);
+      return t;
+    },
+  };
+}
 function idb() {
   if (dbp) return dbp;
-  dbp = new Promise((res, rej) => {
-    const r = indexedDB.open(DB_NAME, 1);
+  dbp = new Promise((res) => {
+    let r;
+    const fallback = () => {
+      storageBlocked = true;
+      res(memoryDb());
+    };
+    try {
+      r = indexedDB.open(DB_NAME, 1);
+    } catch {
+      return fallback();
+    }
     r.onupgradeneeded = () => {
       const d = r.result;
       d.createObjectStore("projects", { keyPath: "id" });
@@ -2113,7 +2176,8 @@ function idb() {
       d.createObjectStore("kv");
     };
     r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
+    r.onerror = () => fallback();
+    r.onblocked = () => fallback();
   });
   return dbp;
 }
@@ -2178,7 +2242,7 @@ const KEY_DEFS = [
 const keys = {
   all() {
     try {
-      return JSON.parse(localStorage.getItem("cf-keys") || "{}");
+      return JSON.parse(LS.getItem("cf-keys") || "{}");
     } catch {
       return {};
     }
@@ -2188,7 +2252,7 @@ const keys = {
     const k = keys.all();
     if (v) k[n] = v.trim();
     else delete k[n];
-    localStorage.setItem("cf-keys", JSON.stringify(k));
+    LS.setItem("cf-keys", JSON.stringify(k));
     changed();
   },
 };
@@ -2785,7 +2849,7 @@ const elevenlabsVoice = {
   id: "elevenlabs", label: "ElevenLabs", cap: "voice",
   available: () => !!keys.get("ELEVENLABS_API_KEY"),
   async speak({ text }) {
-    const voice = localStorage.getItem("cf-eleven-voice") || "pNInz6obpgDQGcFmaJgB";
+    const voice = LS.getItem("cf-eleven-voice") || "pNInz6obpgDQGcFmaJgB";
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}?output_format=mp3_44100_128`, {
       method: "POST", signal: timeout(180000),
       headers: { "xi-api-key": keys.get("ELEVENLABS_API_KEY"), "Content-Type": "application/json", Accept: "audio/mpeg" },
@@ -2955,7 +3019,7 @@ const REGISTRY = {
 const down = new Map(); // circuit breaker: provider -> until
 const isDown = (id) => (down.get(id) || 0) > Date.now();
 function chain(cap, avoid = []) {
-  const order = JSON.parse(localStorage.getItem("cf-order") || "{}")[cap] || [];
+  const order = JSON.parse(LS.getItem("cf-order") || "{}")[cap] || [];
   const all = REGISTRY[cap];
   const rank = (p) => (order.indexOf(p.id) >= 0 ? order.indexOf(p.id) : 100 + all.indexOf(p)) + (isDown(p.id) ? 1000 : 0);
   const usable = all.filter((p) => p.available() && !avoid.includes(p.id)).sort((a, b) => rank(a) - rank(b));
@@ -3824,8 +3888,16 @@ function useBlobUrl(key) {
   }, [key]);
   return url;
 }
-function go(hash) {
-  location.hash = hash;
+// Pages switch in code, not by following links: file previewers (Claude app, phone
+// file viewers) often swallow link clicks, which made the menu look dead.
+let setRouteFn = null;
+function go(route) {
+  route = String(route).replace(/^#/, "") || "make";
+  setRouteFn?.(route);
+  window.scrollTo?.(0, 0);
+  try {
+    if (location.hash.slice(1) !== route) history.replaceState(null, "", "#" + route);
+  } catch {}
 }
 async function downloadBlob(blob, name) {
   const a = document.createElement("a");
@@ -3866,7 +3938,14 @@ function Modal({ onClose, children }) {
 
 // ---------------------------------------------------------------- app shell
 function App() {
-  const [route, setRoute] = useState(location.hash.slice(1) || "make");
+  const [route, setRoute] = useState(() => {
+    try {
+      return location.hash.slice(1) || "make";
+    } catch {
+      return "make";
+    }
+  });
+  setRouteFn = setRoute;
   const [t, setT] = useState(null);
   const [c, setC] = useState(null);
   const timer = useRef();
@@ -3877,12 +3956,21 @@ function App() {
   };
   confirmFn = (o) => new Promise((resolve) => setC({ ...o, resolve }));
   useEffect(() => {
-    const f = () => {
-      setRoute(location.hash.slice(1) || "make");
-      window.scrollTo(0, 0);
-    };
+    const f = () => setRoute(location.hash.slice(1) || "make");
     addEventListener("hashchange", f);
-    return () => removeEventListener("hashchange", f);
+    // catch clicks on in-app links (href="#…") before anything else can
+    const onClick = (e) => {
+      const a = e.target.closest?.("a[href^='#']");
+      if (!a || e.button !== 0 || e.metaKey || e.ctrlKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      go(a.getAttribute("href"));
+    };
+    window.addEventListener("click", onClick, true);
+    return () => {
+      removeEventListener("hashchange", f);
+      window.removeEventListener("click", onClick, true);
+    };
   }, []);
   // warn before closing while videos are being made (they resume on reopen)
   useEffect(() => {
@@ -3908,6 +3996,8 @@ function App() {
     name === "system" ? html`<${SystemPage} />` : html`<${HomePage} />`;
   return html`
     <${Nav} route=${name} />
+    ${storageBlocked && html`<div class="wrap"><div class="banner bad" style="margin-top:6px">
+      <span class="small"><b>Nothing will be saved here.</b> This window is blocking storage (it's probably a file preview or private window). Save the file to your computer and open it in Chrome or Edge to keep your work.</span></div></div>`}
     <main class="wrap">${page}</main>
     ${t && html`<div class=${"toast" + (t.bad ? " bad" : "")}>${t.msg}</div>`}
     ${c && html`<${Modal} onClose=${() => close(false)}>
@@ -3923,9 +4013,9 @@ function Nav({ route }) {
   const errs = useData(() => kv.get("errors", []).then((l) => l.filter((e) => !e.resolved).length));
   useData(async () => keys.all()); // re-render when keys change
   const practice = practiceMode();
-  const L = (r, label, dot) => html`<a href=${"#" + r} class=${"link" + (route === r || (r === "projects" && route === "project") ? " on" : "")}>${label}${dot && html`<span class="dot" style=${dot === "amber" ? "background:var(--amber)" : ""}></span>`}</a>`;
+  const L = (r, label, dot) => html`<button type="button" onClick=${() => go(r)} class=${"link" + (route === r || (r === "projects" && route === "project") ? " on" : "")}>${label}${dot && html`<span class="dot" style=${dot === "amber" ? "background:var(--amber)" : ""}></span>`}</button>`;
   return html`<nav class="nav">
-    <a href="#make" class="logo">CONTENT<br />FACTORY</a>
+    <button type="button" onClick=${() => go("make")} class="logo">CONTENT<br />FACTORY</button>
     ${L("make", "✚ Make")}${L("projects", "📁 Projects")}${L("formats", "📜 Formats")}
     ${L("connect", "🔌 Connect AI", practice && "amber")}${L("system", "⚙ System", errs > 0 && "red")}
   </nav>`;
@@ -3940,7 +4030,7 @@ const EXAMPLES = [
 const LANGS = ["English", "Korean", "Spanish", "Japanese", "Chinese", "Portuguese", "French", "German"];
 const loadLS = (k, d) => {
   try {
-    return JSON.parse(localStorage.getItem(k) || "null") ?? d;
+    return JSON.parse(LS.getItem(k) || "null") ?? d;
   } catch {
     return d;
   }
@@ -3953,8 +4043,8 @@ function HomePage() {
   const [busy, setBusy] = useState(false);
   const formats = useData(listFormats);
   const recent = useData(async () => (await db.all("projects")).filter((p) => !p.deletedAt).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, 3));
-  useEffect(() => localStorage.setItem("cf-draft", JSON.stringify(text)), [text]);
-  useEffect(() => localStorage.setItem("cf-last", JSON.stringify(last)), [last]);
+  useEffect(() => LS.setItem("cf-draft", JSON.stringify(text)), [text]);
+  useEffect(() => LS.setItem("cf-last", JSON.stringify(last)), [last]);
   const auto = !last.formatId || last.formatId === "auto" || !formats?.some((f) => f.id === last.formatId);
   const format = formats ? (auto ? detectFormat(text, formats) : formats.find((f) => f.id === last.formatId)) : null;
   const count = last.count || parseCount(text);
@@ -3969,7 +4059,7 @@ function HomePage() {
     } catch {}
     try {
       const p = await createProject({ request: text, formatId: auto ? "auto" : format?.id, count: last.count, lengthSec: last.lengthSec, language: last.language });
-      localStorage.removeItem("cf-draft");
+      LS.removeItem("cf-draft");
       go("project-" + p.id);
     } catch (e) {
       toast(e.message, true);
@@ -4516,7 +4606,7 @@ function ProviderOrder() {
         [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
         const next = { ...order, [cap]: ids };
         setOrder(next);
-        localStorage.setItem("cf-order", JSON.stringify(next));
+        LS.setItem("cf-order", JSON.stringify(next));
         toast("Saved ✓");
       }}>↑</button></div>`)}</div></div>`;
   })}</div>`;
@@ -4530,13 +4620,7 @@ async function cleanupFiles() {
   for (const k of all) if (!used.has(k)) await tx("blobs", "readwrite", (o) => req(o.delete(k)));
 }
 (async () => {
-  try {
-    await idb();
-  } catch (e) {
-    document.getElementById("app").innerHTML =
-      '<div class="wrap"><div class="banner bad" style="margin-top:40px">This browser blocked storage (private window?). Open the page in a normal Chrome, Edge or Safari window.</div></div>';
-    return;
-  }
+  await idb(); // falls back to memory if storage is blocked
   const root = document.getElementById("app");
   root.textContent = ""; // remove the "Loading…" placeholder
   render(html`<${App} />`, root);

@@ -35,6 +35,30 @@ function ago(iso) {
 }
 const safeName = (s) => String(s).replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-").slice(0, 60) || "video";
 
+// localStorage can be blocked (file previews, private windows): fall back to memory
+const memLS = new Map();
+const LS = {
+  getItem(k) {
+    try {
+      return localStorage.getItem(k);
+    } catch {
+      return memLS.has(k) ? memLS.get(k) : null;
+    }
+  },
+  setItem(k, v) {
+    memLS.set(k, String(v));
+    try {
+      localStorage.setItem(k, v);
+    } catch {}
+  },
+  removeItem(k) {
+    memLS.delete(k);
+    try {
+      localStorage.removeItem(k);
+    } catch {}
+  },
+};
+
 // change bus: UI re-reads after any write
 const bus = new EventTarget();
 let changeTimer = null;
@@ -46,10 +70,48 @@ function changed() {
 // ---------------------------------------------------------------- storage (IndexedDB)
 const DB_NAME = "content-factory-web";
 let dbp = null;
+let storageBlocked = false;
+/** Minimal in-memory stand-in for IndexedDB, used when the browser blocks storage. */
+function memoryDb() {
+  const stores = { projects: new Map(), videos: new Map(), formats: new Map(), blobs: new Map(), kv: new Map() };
+  const keyPath = { projects: "id", videos: "id", formats: "id" };
+  const done = (result) => {
+    const r = { result };
+    queueMicrotask(() => r.onsuccess?.());
+    return r;
+  };
+  const store = (name) => {
+    const m = stores[name];
+    return {
+      get: (k) => done(structuredClone(m.get(k))),
+      getAll: () => done([...m.values()].map((v) => structuredClone(v))),
+      getAllKeys: () => done([...m.keys()]),
+      put: (v, k) => (m.set(k !== undefined ? k : v[keyPath[name]], v instanceof Blob ? v : structuredClone(v)), done(undefined)),
+      delete: (k) => (m.delete(k), done(undefined)),
+      index: (field) => ({ getAll: (val) => done([...m.values()].filter((v) => v[field] === val).map((v) => structuredClone(v))) }),
+    };
+  };
+  return {
+    transaction: (name) => {
+      const t = { objectStore: () => store(name) };
+      setTimeout(() => t.oncomplete?.(), 0);
+      return t;
+    },
+  };
+}
 function idb() {
   if (dbp) return dbp;
-  dbp = new Promise((res, rej) => {
-    const r = indexedDB.open(DB_NAME, 1);
+  dbp = new Promise((res) => {
+    let r;
+    const fallback = () => {
+      storageBlocked = true;
+      res(memoryDb());
+    };
+    try {
+      r = indexedDB.open(DB_NAME, 1);
+    } catch {
+      return fallback();
+    }
     r.onupgradeneeded = () => {
       const d = r.result;
       d.createObjectStore("projects", { keyPath: "id" });
@@ -59,7 +121,8 @@ function idb() {
       d.createObjectStore("kv");
     };
     r.onsuccess = () => res(r.result);
-    r.onerror = () => rej(r.error);
+    r.onerror = () => fallback();
+    r.onblocked = () => fallback();
   });
   return dbp;
 }
@@ -124,7 +187,7 @@ const KEY_DEFS = [
 const keys = {
   all() {
     try {
-      return JSON.parse(localStorage.getItem("cf-keys") || "{}");
+      return JSON.parse(LS.getItem("cf-keys") || "{}");
     } catch {
       return {};
     }
@@ -134,7 +197,7 @@ const keys = {
     const k = keys.all();
     if (v) k[n] = v.trim();
     else delete k[n];
-    localStorage.setItem("cf-keys", JSON.stringify(k));
+    LS.setItem("cf-keys", JSON.stringify(k));
     changed();
   },
 };
