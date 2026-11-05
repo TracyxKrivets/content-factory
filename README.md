@@ -8,7 +8,10 @@ Everything runs in your browser (Chrome or Edge recommended): AI calls with your
 - Want a link you can open anywhere, including your phone? Drag the file onto https://app.netlify.com/drop (rename it `index.html` first).
 - Projects and keys are saved **in that browser**. A different browser or device starts empty.
 - Keep the tab open while videos are being made. If you close it, they pick up where they left off next time you open it.
-- Edit the source in `web/src/`, then run `node web/build.mjs` to rebuild the file.
+- **🛠 Change the app:** the button in the corner opens a chat. Describe what to fix, add or remove, and the AI edits the app's own code (uses your Anthropic or OpenAI key). It reloads by itself to show the change.
+  - **Undo** goes back one change; **History** lists every version; **Download this version** saves the changed app as a new file.
+  - If a change stops the app from starting, it is undone automatically. The chat itself can't be edited, so it always works.
+- Developers: edit the source in `web/src/` (app) and `web/shell/` (loader + chat), then run `node web/build.mjs`.
 
 ---
 

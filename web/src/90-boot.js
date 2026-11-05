@@ -10,6 +10,8 @@ async function cleanupFiles() {
   const root = document.getElementById("app");
   root.textContent = ""; // remove the "Loading…" placeholder
   render(html`<${App} />`, root);
+  window.__cfGo = go; // lets the "Change the app" chat open pages
+  window.__cfShell?.ready(); // tells the loader this version started fine
   navigator.storage?.persist?.().catch(() => {});
   await resumeAll();
   if (!running.size && !queue.length) cleanupFiles().catch(() => {});

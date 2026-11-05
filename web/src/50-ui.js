@@ -129,6 +129,7 @@ function App() {
   // warn before closing while videos are being made (they resume on reopen)
   useEffect(() => {
     const f = (e) => {
+      if (window.__cfReloading) return; // the chat is reloading to apply a change
       if (running.size || queue.length) {
         e.preventDefault();
         e.returnValue = "";
