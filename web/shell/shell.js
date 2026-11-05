@@ -73,6 +73,33 @@
     }
   }
 
+  // ---------------------------------------------------------------- Claude account (inside claude.ai only)
+  // window.claude exists only when the page runs inside a Claude viewer; use() resolves later.
+  window.__cfClaude = { inClaude: !!window.claude?.use, sample: null, downloads: null, declined: false };
+  window.__cfClaudeP = (async () => {
+    if (!window.claude?.use) return window.__cfClaude;
+    const [sample, downloads] = await Promise.all([
+      window.claude.use("sample").catch(() => null),
+      window.claude.use("downloads").catch(() => null),
+    ]);
+    let tools = false;
+    try {
+      tools = !!(sample && (await sample.limits())?.tools);
+    } catch {}
+    Object.assign(window.__cfClaude, { sample, downloads, tools });
+    window.dispatchEvent(new Event("cf-claude"));
+    return window.__cfClaude;
+  })();
+  const LS = {
+    get(k, d) {
+      try {
+        return JSON.parse(localStorage.getItem(k) || "null") ?? d;
+      } catch {
+        return d;
+      }
+    },
+  };
+
   let readyResolve;
   const appReady = new Promise((r) => (readyResolve = r));
   window.__cfShell = {
@@ -250,7 +277,7 @@ HOW THE APP IS BUILT
 - UI: Preact + htm. Available from window.htmPreact: html, render, useState, useEffect, useRef, useMemo, useCallback. Templates are html\`...\` with \${} expressions; components are functions; close components with <//>.
 - Other globals: Mp4Muxer (MP4 writing), fflate (ZIP).
 - Storage: IndexedDB through db / kv / blobs helpers and update() in 00-core.js; small settings via LS (localStorage wrapper). Keep old saved data working if you change data shapes.
-- Navigation: go("make" | "projects" | "project-<id>" | "formats" | "connect" | "system"), defined in 50-ui.js; pages are chosen in App(). Use buttons with onClick=\${() => go("x")}, never plain links.
+- Navigation: go("make" | "projects" | "project-<id>" | "connect" | "system"), defined in 50-ui.js; pages are chosen in App(). Use buttons with onClick=\${() => go("x")}, never plain links.
 - Network: only the AI provider APIs, called with the user's own keys (20-providers.js). No other websites, no CDNs.
 - Video pipeline: 40-pipeline.js (steps, queue), rendering in 30-render.js (canvas + WebCodecs).
 - To add a new page: write the component (e.g. in a new file "65-mypage.js"), add it to the page switch in App() and a button in Nav (50-ui.js).
@@ -269,9 +296,11 @@ RULES
   }
 
   // ---------------------------------------------------------------- AI providers for the chat
-  const PRICE = { "claude-sonnet-5-5": [3, 15], "gpt-4.1": [2, 8] };
+  // rough USD per 1M tokens [input, output] — estimates for the cost note
+  const PRICE = { "claude-opus-5-5": [5, 25], "claude-sonnet-5-5": [3, 15], "claude-haiku-5-5": [1, 5], "gpt-4.1": [2, 8] };
+  const chatModel = () => LS.get("cf-models", {}).chat || "claude-sonnet-5-5";
   async function callAnthropic(key, system, messages) {
-    const model = "claude-sonnet-5-5";
+    const model = chatModel();
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json", "anthropic-dangerous-direct-browser-access": "true" },
@@ -290,7 +319,7 @@ RULES
     return {
       content: j.content || [],
       stop: j.stop_reason,
-      cost: (inTok * PRICE[model][0] + (u.output_tokens || 0) * PRICE[model][1]) / 1e6,
+      cost: (inTok * (PRICE[model] || PRICE["claude-sonnet-5-5"])[0] + (u.output_tokens || 0) * (PRICE[model] || PRICE["claude-sonnet-5-5"])[1]) / 1e6,
     };
   }
   // OpenAI: translate to/from the Anthropic-style messages used by the loop
@@ -336,18 +365,97 @@ RULES
     if (res.status === 402 || /credit|quota|billing/i.test(body)) return new Error(`Your ${who} account is out of credits.`);
     return new Error(`${who} had a problem (${res.status}). Try again. ${body}`);
   }
+  /** Which AI runs the chat: the choice on the Connect AI page, else whatever is available. */
   function pickModel() {
-    if (window.__cfMockAgent) return { name: "Test agent", call: window.__cfMockAgent };
+    if (window.__cfMockAgent) return { kind: "loop", call: window.__cfMockAgent };
+    const C = window.__cfClaude;
     const k = appKeys();
-    if (k.ANTHROPIC_API_KEY) return { name: "Claude", call: (s, m) => callAnthropic(k.ANTHROPIC_API_KEY, s, m) };
-    if (k.OPENAI_API_KEY) return { name: "GPT", call: (s, m) => callOpenAI(k.OPENAI_API_KEY, s, m) };
-    return null;
+    const pref = LS.get("cf-roles", {}).chat;
+    const opts = {
+      "claude-account": C.sample && !C.declined ? { kind: "sample" } : null,
+      anthropic: !C.inClaude && k.ANTHROPIC_API_KEY ? { kind: "loop", call: (s, m) => callAnthropic(k.ANTHROPIC_API_KEY, s, m) } : null,
+      openai: !C.inClaude && k.OPENAI_API_KEY ? { kind: "loop", call: (s, m) => callOpenAI(k.OPENAI_API_KEY, s, m) } : null,
+    };
+    return opts[pref] || opts["claude-account"] || opts.anthropic || opts.openai || null;
+  }
+  /** Model options for a Claude-account call, from the chosen model name. */
+  function sampleModelOpts(model) {
+    if (model === "claude-opus-5-5") return { model, modelTier: "complex" };
+    if (model === "claude-haiku-5-5") return { model, modelTier: "quick" };
+    return { model: "claude-sonnet-5-5", modelTier: "default" };
+  }
+  function sampleErrorText(e) {
+    const c = e?.code;
+    if (c === "not_granted") {
+      window.__cfClaude.declined = true;
+      return "The app wasn't allowed to use your Claude account. Reload the page and press Allow when Claude asks.";
+    }
+    if (c === "rate_limited") return "You've hit your Claude usage limit for now. Try again a bit later.";
+    if (c === "sampling_disabled") return "Claude isn't available for this account here.";
+    if (c === "session_expired") return "Please sign in to Claude again.";
+    if (c === "prompt_too_large") return "That was too much for one go. Try a smaller request.";
+    if (c === "tools_unavailable") return "This Claude app can't edit code from a page yet. Try claude.ai in a web browser.";
+    if (c === "cancelled") return "Stopped.";
+    return "Claude had a problem with that. Try again.";
+  }
+
+  /** Same job as runAgent, but on the viewer's Claude account: sample() runs the tool rounds itself. */
+  async function runAgentSample(request, history, log) {
+    const sample = window.__cfClaude.sample;
+    const files = structuredClone(window.__cfActive.files);
+    const before = JSON.stringify(files);
+    const tools = TOOLS.map((t) => ({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.input_schema,
+      execute: (input) => {
+        const out = String(runTool(files, t.name, input || {}, log));
+        return out.length > 30000 ? out.slice(0, 30000) + "\n… (cut off: read a smaller range)" : out;
+      },
+    }));
+    const turns = [
+      { role: "user", content: systemPrompt(files) + "\n\nYou have a limited number of tool rounds per reply. If you run out before you're done, end your reply with the word [CONTINUE] and you'll get another turn." },
+      ...history.filter((m) => m.role === "user" || m.role === "assistant").slice(-8).map((m) => ({ role: m.role, content: m.text })),
+      { role: "user", content: request },
+    ];
+    let reply = "";
+    let fixes = 0;
+    for (let round = 0; round < 5; round++) {
+      let r;
+      try {
+        r = await sample(turns, { tools, ...sampleModelOpts(chatModel()) });
+      } catch (e) {
+        throw new Error(sampleErrorText(e));
+      }
+      const text = String(r.text || "").trim();
+      reply = text.replace(/\[CONTINUE\]/g, "").trim().split(/\n\s*\n/).pop() || reply;
+      turns.push({ role: "assistant", content: text });
+      if (/\[CONTINUE\]/.test(text)) {
+        log("Continuing…");
+        turns.push({ role: "user", content: "Continue where you left off. Your edits so far are kept." });
+        continue;
+      }
+      if (JSON.stringify(files) !== before) {
+        const err = syntaxError(files);
+        if (err && fixes < 2) {
+          fixes++;
+          log("Fixing a mistake in the change");
+          turns.push({ role: "user", content: `Your change has a syntax error, so it can't run: ${err}. Fix it with edit_file, then reply with the summary again.` });
+          continue;
+        }
+        if (err) throw new Error("I couldn't get that change to work, so nothing was changed. Try asking in a different way.");
+      }
+      return { reply: reply || "Done.", files, changed: JSON.stringify(files) !== before, cost: 0 };
+    }
+    throw new Error("That took too many steps, so I stopped and changed nothing. Try a smaller request.");
   }
 
   /** One user request → tool loop → (maybe) a new version. */
   async function runAgent(request, history, log) {
+    await window.__cfClaudeP;
     const model = pickModel();
     if (!model) throw new Error("NO_KEY");
+    if (model.kind === "sample") return runAgentSample(request, history, log);
     const files = structuredClone(window.__cfActive.files);
     const before = JSON.stringify(files);
     const system = systemPrompt(files);
@@ -431,13 +539,26 @@ ${head}
 </body>
 </html>`;
   }
-  function download(name, text) {
+  async function download(name, text) {
+    const d = window.__cfClaude.downloads;
+    if (d) {
+      try {
+        await d.save({ filename: name, data: new Blob([text], { type: "text/html" }) });
+      } catch (e) {
+        if (e?.code !== "declined") alertBox("Couldn't save the file here: " + (e?.message || e?.code));
+      }
+      return;
+    }
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([text], { type: "text/html" }));
     a.download = name;
     document.body.appendChild(a);
     a.click();
     a.remove();
+  }
+
+  function alertBox(msg) {
+    addChat({ role: "system", text: msg });
   }
 
   // ---------------------------------------------------------------- chat UI
@@ -495,7 +616,14 @@ ${head}
         }
         await addChat({ role: "assistant", text: out.reply, costNote });
       } catch (e) {
-        if (e.message === "NO_KEY") await addChat({ role: "system", text: "To change the app I need an Anthropic or OpenAI key. Add one on the Connect AI page, then ask again.", action: "connect" });
+        if (e.message === "NO_KEY")
+          await addChat({
+            role: "system",
+            text: window.__cfClaude.inClaude
+              ? "I can't reach your Claude account from this page right now. Reload it and press Allow when Claude asks."
+              : "To change the app I need an AI: add an Anthropic or OpenAI key on the Connect AI page (or open the app inside Claude to use your Claude account), then ask again.",
+            action: window.__cfClaude.inClaude ? null : "connect",
+          });
         else await addChat({ role: "system", text: e.message || String(e) });
       }
       setBusy(false);

@@ -128,3 +128,10 @@ pre.tech { white-space: pre-wrap; word-break: break-word; background: #0a0f22; p
 }
 
 .btn.tight { flex: 1; min-width: 0; padding: 8px 6px; white-space: nowrap; font-size: 14px; }
+
+/* Connect AI: one option per row inside each job */
+.roleopt { border: 2px solid var(--line); border-radius: 14px; padding: 10px 12px; background: var(--bg2); }
+.roleopt.on { border-color: var(--amber); background: #221d10; }
+.roleopt.off .roleopt-main b { opacity: .75; }
+.roleopt-main { display: flex; align-items: flex-start; gap: 12px; width: 100%; background: none; border: 0; padding: 0; cursor: pointer; color: inherit; font: inherit; text-align: left; }
+.roleopt .radio { font-size: 20px; width: 22px; color: var(--amber); line-height: 1.2; }

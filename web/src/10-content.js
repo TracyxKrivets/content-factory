@@ -388,3 +388,34 @@ function keywords(text, style) {
   return [...new Set(words)].slice(0, 3).join(" ") || style.split(",")[0];
 }
 
+
+// ---------------------------------------------------------------- style from a free-text content type
+const CAPTION_OPTIONS = ["bold-yellow", "clean-white", "red-highlight", "glitch"];
+const MUSIC_OPTIONS = ["chill-pad", "upbeat-pulse", "tense-pulse", "dark-drone", "eerie-tone", "none"];
+function designPrompt(contentType, request) {
+  return {
+    system: "You design the style for a series of short-form videos (TikTok, Reels, Shorts). Reply with JSON only.",
+    prompt: `Content type: ${contentType || "(not given: work it out from the request)"}
+Request: ${request.slice(0, 300)}
+Design a style that fits. captionStyle is one of: ${CAPTION_OPTIONS.join(", ")}. musicStyle is one of: ${MUSIC_OPTIONS.join(", ")}. lengthSec between 20 and 60.
+JSON: {"name":"2-4 words","emoji":"one emoji","description":"one line","hookStyle":"how line 1 grabs","structure":"beat by beat","visualStyle":"what the pictures look like","voiceStyle":"how the narrator sounds","captionStyle":"bold-yellow","musicStyle":"chill-pad","lengthSec":40}`,
+    maxTokens: 500,
+  };
+}
+/** Without AI: pick the closest built-in style and name it after what was typed. */
+function fallbackStyle(contentType, request) {
+  const base = detectFormat(`${contentType || ""} ${request}`, STARTER_FORMATS.map((f, i) => ({ ...f, id: f.key, isDefault: i === 0 })));
+  const { key, id, isDefault, ...rest } = base;
+  const name = (contentType || "").trim();
+  return name ? { ...rest, name: name.slice(0, 40), emoji: rest.emoji, description: name } : rest;
+}
+function cleanStyle(j, fallback) {
+  const s = { ...fallback };
+  for (const k of ["name", "emoji", "description", "hookStyle", "structure", "visualStyle", "voiceStyle"]) if (j?.[k]) s[k] = String(j[k]).slice(0, 400);
+  if (CAPTION_OPTIONS.includes(j?.captionStyle)) s.captionStyle = j.captionStyle;
+  if (MUSIC_OPTIONS.includes(j?.musicStyle)) s.musicStyle = j.musicStyle;
+  if (Number(j?.lengthSec)) s.lengthSec = clamp(Math.round(Number(j.lengthSec)), 20, 60);
+  s.name = s.name.slice(0, 40);
+  s.emoji = [...String(s.emoji || "🎬")].slice(0, 2).join("");
+  return s;
+}

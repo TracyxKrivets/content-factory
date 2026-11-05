@@ -54,6 +54,15 @@ function go(route) {
   } catch {}
 }
 async function downloadBlob(blob, name) {
+  const d = window.__cfClaude?.downloads;
+  if (d) {
+    try {
+      await d.save({ filename: name, data: blob });
+    } catch (e) {
+      if (e?.code !== "declined") toast("Couldn't save the file here. Try the downloaded-file version of the app.", true);
+    }
+    return;
+  }
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
   a.download = name;
@@ -146,7 +155,6 @@ function App() {
   const page =
     name === "project" ? html`<${ProjectPage} id=${arg} />` :
     name === "projects" ? html`<${ProjectsPage} />` :
-    name === "formats" ? html`<${FormatsPage} />` :
     name === "connect" ? html`<${ConnectPage} />` :
     name === "system" ? html`<${SystemPage} />` : html`<${HomePage} />`;
   return html`
@@ -171,7 +179,7 @@ function Nav({ route }) {
   const L = (r, label, dot) => html`<button type="button" onClick=${() => go(r)} class=${"link" + (route === r || (r === "projects" && route === "project") ? " on" : "")}>${label}${dot && html`<span class="dot" style=${dot === "amber" ? "background:var(--amber)" : ""}></span>`}</button>`;
   return html`<nav class="nav">
     <button type="button" onClick=${() => go("make")} class="logo">CONTENT<br />FACTORY</button>
-    ${L("make", "✚ Make")}${L("projects", "📁 Projects")}${L("formats", "📜 Formats")}
+    ${L("make", "✚ Make")}${L("projects", "📁 Projects")}
     ${L("connect", "🔌 Connect AI", practice && "amber")}${L("system", "⚙ System", errs > 0 && "red")}
   </nav>`;
 }

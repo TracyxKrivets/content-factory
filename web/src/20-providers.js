@@ -51,14 +51,54 @@ const MODELS = {
   anthropic: { cheap: "claude-haiku-5-5", quality: "claude-sonnet-5-5" },
   openai: { cheap: "gpt-4.1-mini", quality: "gpt-4.1" },
 };
+/** Claude models you can pick for writing scripts and for the change-the-app chat. */
+const CLAUDE_MODELS = [
+  ["claude-opus-5-5", "Opus 5.5", "best writing, slower"],
+  ["claude-sonnet-5-5", "Sonnet 5.5", "great + fast (recommended)"],
+  ["claude-haiku-5-5", "Haiku 5.5", "fastest, simplest"],
+];
+const modelChoice = (role) => loadSetting("cf-models", {})[role] || "claude-sonnet-5-5";
+TOKEN_PRICES["claude-opus-5-5"] = [5, 25];
+
+// Inside claude.ai the page can't reach other websites, so key-based services are off there.
+const CLAUDE = () => window.__cfClaude || { inClaude: false };
+const canFetch = () => !CLAUDE().inClaude;
 const timeout = (ms) => (AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
 
 // ---------------------------------------------------------------- AI writers
-const anthropicLlm = {
-  id: "anthropic", label: "Anthropic Claude", cap: "llm",
-  available: () => !!keys.get("ANTHROPIC_API_KEY"),
+/** Writer on the viewer's own Claude account (only when the app runs inside claude.ai). */
+const claudeAccountLlm = {
+  id: "claude-account", label: "Your Claude account", cap: "llm",
+  available: () => !!CLAUDE().sample && !CLAUDE().declined,
   async complete(r) {
-    const model = MODELS.anthropic[r.tier];
+    const model = r.tier === "quality" ? modelChoice("writer") : "claude-haiku-5-5";
+    const tier = model === "claude-opus-5-5" ? "complex" : model === "claude-haiku-5-5" ? "quick" : "default";
+    try {
+      const { text } = await CLAUDE().sample(`${r.system}\n\n${r.prompt}\n\nReply with only the JSON, no other text.`, { model, modelTier: tier, cache: false });
+      return { text, model, cost: 0 };
+    } catch (e) {
+      throw sampleProviderError(e);
+    }
+  },
+};
+function sampleProviderError(e) {
+  const c = e?.code;
+  const m = `Claude account: ${c || "error"} ${e?.message || ""}`;
+  if (c === "not_granted" || c === "sampling_disabled" || c === "session_expired") {
+    if (c === "not_granted") CLAUDE().declined = true;
+    return new ProviderError("auth", m, { provider: "claude-account" });
+  }
+  if (c === "rate_limited") return new ProviderError("quota", m, { provider: "claude-account", retryable: false });
+  if (c === "refused") return new ProviderError("content_blocked", m, { provider: "claude-account" });
+  if (c === "invalid_json" || c === "empty_completion") return new ProviderError("bad_output", m, { provider: "claude-account", retryable: true });
+  if (c === "upstream_error") return new ProviderError("network", m, { provider: "claude-account", retryable: true });
+  return new ProviderError("unknown", m, { provider: "claude-account" });
+}
+const anthropicLlm = {
+  id: "anthropic", label: "Anthropic API", cap: "llm",
+  available: () => canFetch() && !!keys.get("ANTHROPIC_API_KEY"),
+  async complete(r) {
+    const model = r.tier === "quality" ? modelChoice("writer") : MODELS.anthropic.cheap;
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST", signal: timeout(120000),
       headers: {
@@ -76,8 +116,8 @@ const anthropicLlm = {
   },
 };
 const openaiLlm = {
-  id: "openai", label: "OpenAI", cap: "llm",
-  available: () => !!keys.get("OPENAI_API_KEY"),
+  id: "openai", label: "OpenAI API", cap: "llm",
+  available: () => canFetch() && !!keys.get("OPENAI_API_KEY"),
   async complete(r) {
     const model = MODELS.openai[r.tier];
     const res = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -116,7 +156,7 @@ const offlineLlm = {
 // ---------------------------------------------------------------- voices
 const elevenlabsVoice = {
   id: "elevenlabs", label: "ElevenLabs", cap: "voice",
-  available: () => !!keys.get("ELEVENLABS_API_KEY"),
+  available: () => canFetch() && !!keys.get("ELEVENLABS_API_KEY"),
   async speak({ text }) {
     const voice = LS.getItem("cf-eleven-voice") || "pNInz6obpgDQGcFmaJgB";
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}?output_format=mp3_44100_128`, {
@@ -130,7 +170,7 @@ const elevenlabsVoice = {
 };
 const openaiVoice = {
   id: "openai-tts", label: "OpenAI voice", cap: "voice",
-  available: () => !!keys.get("OPENAI_API_KEY"),
+  available: () => canFetch() && !!keys.get("OPENAI_API_KEY"),
   async speak({ text, style }) {
     const res = await fetch("https://api.openai.com/v1/audio/speech", {
       method: "POST", signal: timeout(180000),
@@ -157,7 +197,7 @@ const noVoice = {
 const W = 1080, H = 1920;
 const openaiImage = {
   id: "openai-image", label: "OpenAI images", cap: "image",
-  available: () => !!keys.get("OPENAI_API_KEY"),
+  available: () => canFetch() && !!keys.get("OPENAI_API_KEY"),
   async generate({ prompt }) {
     const res = await fetch("https://api.openai.com/v1/images/generations", {
       method: "POST", signal: timeout(180000),
@@ -173,7 +213,7 @@ const openaiImage = {
 };
 const pexelsImage = {
   id: "pexels", label: "Pexels stock photos", cap: "image",
-  available: () => !!keys.get("PEXELS_API_KEY"),
+  available: () => canFetch() && !!keys.get("PEXELS_API_KEY"),
   async generate({ search, format, avoid }) {
     for (const q of [search, `${search} cinematic`, format.visualStyle.split(",")[0]]) {
       const res = await fetch(`https://api.pexels.com/v1/search?query=${encodeURIComponent(q)}&orientation=portrait&per_page=20`, {
@@ -260,7 +300,7 @@ const estimatedCaptions = {
 };
 const whisperCaptions = {
   id: "openai-whisper", label: "OpenAI exact timing", cap: "captions",
-  available: () => !!keys.get("OPENAI_API_KEY"),
+  available: () => canFetch() && !!keys.get("OPENAI_API_KEY"),
   async timings({ audio, duration }) {
     if (!audio) throw new ProviderError("missing_asset", "No voice audio to time", { provider: "openai-whisper" });
     const form = new FormData();
@@ -280,24 +320,30 @@ const whisperCaptions = {
 
 // ---------------------------------------------------------------- registry + fallback chain
 const REGISTRY = {
-  llm: [anthropicLlm, openaiLlm, offlineLlm],
+  llm: [claudeAccountLlm, anthropicLlm, openaiLlm, offlineLlm],
   voice: [elevenlabsVoice, openaiVoice, noVoice],
   image: [openaiImage, pexelsImage, offlineImage],
   captions: [estimatedCaptions, whisperCaptions],
 };
 const down = new Map(); // circuit breaker: provider -> until
 const isDown = (id) => (down.get(id) || 0) > Date.now();
+/** The provider picked for each role on the Connect AI page (others are automatic backups). */
+const ROLE_OF = { llm: "writer", voice: "voice", image: "visuals", captions: "captions" };
+const roleChoice = (role) => loadSetting("cf-roles", {})[role];
 function chain(cap, avoid = []) {
-  const order = JSON.parse(LS.getItem("cf-order") || "{}")[cap] || [];
+  const pick = roleChoice(ROLE_OF[cap]);
   const all = REGISTRY[cap];
-  const rank = (p) => (order.indexOf(p.id) >= 0 ? order.indexOf(p.id) : 100 + all.indexOf(p)) + (isDown(p.id) ? 1000 : 0);
+  const rank = (p) => (p.id === pick ? -1 : all.indexOf(p)) + (isDown(p.id) ? 1000 : 0);
   const usable = all.filter((p) => p.available() && !avoid.includes(p.id)).sort((a, b) => rank(a) - rank(b));
   if (cap === "captions") return usable;
+  // picking a free/offline option on purpose (e.g. "No voice") is respected
+  if (pick && usable[0]?.id === pick && usable[0].offline) return [usable[0]];
   const online = usable.filter((p) => !p.offline);
   return online.length ? online : usable.filter((p) => p.offline);
 }
 const providerById = (id) => Object.values(REGISTRY).flat().find((p) => p.id === id);
 const PRACTICE_IDS = new Set(["offline-writer", "no-voice", "offline-cards"]);
+/** Practice mode = no real AI writer connected (voice/visuals may be free options by choice). */
 function practiceMode() {
-  return ["llm", "voice", "image"].some((c) => !REGISTRY[c].some((p) => !p.offline && p.available()));
+  return !REGISTRY.llm.some((p) => !p.offline && p.available());
 }

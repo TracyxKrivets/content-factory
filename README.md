@@ -1,11 +1,18 @@
 # Content Factory
 
-## ⚡ Easiest way: just open `Content Factory.html`
+## ⚡ Two ways to open it
+
+**Inside Claude (free, no keys):** https://claude.ai/artifact/G6eEobvvmshFojyA5nYxEt
+The Writer and the change-the-app chat run on your Claude account. Outside services (ElevenLabs, OpenAI, Pexels) are blocked inside Claude, so videos there are text + music over color backgrounds.
+
+**The file (all services):** open `Content Factory.html`
 
 Double-click **`Content Factory.html`**. That's it: no install, no server, no start-up.
 Everything runs in your browser (Chrome or Edge recommended): AI calls with your keys, saving, and making the MP4s.
 
 - Want a link you can open anywhere, including your phone? Drag the file onto https://app.netlify.com/drop (rename it `index.html` first).
+- Connect AI is grouped by job (Writer, Voice, Visuals, Caption timing, Chat). Pick what does each job; Claude models Opus 5.5 / Sonnet 5.5 / Haiku 5.5 are selectable.
+- No formats to manage: type the kind of content you want and the AI designs the style.
 - Projects and keys are saved **in that browser**. A different browser or device starts empty.
 - Keep the tab open while videos are being made. If you close it, they pick up where they left off next time you open it.
 - **🛠 Change the app:** the button in the corner opens a chat. Describe what to fix, add or remove, and the AI edits the app's own code (uses your Anthropic or OpenAI key). It reloads by itself to show the change.

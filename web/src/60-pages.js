@@ -16,16 +16,14 @@ const loadLS = (k, d) => {
 function HomePage() {
   const [text, setText] = useState(() => loadLS("cf-draft", ""));
   const [last, setLast] = useState(() => loadLS("cf-last", {}));
-  const [pick, setPick] = useState(false);
+  const [type, setType] = useState(() => loadLS("cf-type", ""));
   const [busy, setBusy] = useState(false);
-  const formats = useData(listFormats);
+  const recentTypes = loadLS("cf-types", []);
   const recent = useData(async () => (await db.all("projects")).filter((p) => !p.deletedAt).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, 3));
   useEffect(() => LS.setItem("cf-draft", JSON.stringify(text)), [text]);
   useEffect(() => LS.setItem("cf-last", JSON.stringify(last)), [last]);
-  const auto = !last.formatId || last.formatId === "auto" || !formats?.some((f) => f.id === last.formatId);
-  const format = formats ? (auto ? detectFormat(text, formats) : formats.find((f) => f.id === last.formatId)) : null;
+  useEffect(() => LS.setItem("cf-type", JSON.stringify(type)), [type]);
   const count = last.count || parseCount(text);
-  const length = last.lengthSec || format?.lengthSec || 40;
   const practice = practiceMode();
 
   async function generate() {
@@ -35,8 +33,9 @@ function HomePage() {
       if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().catch?.(() => {});
     } catch {}
     try {
-      const p = await createProject({ request: text, formatId: auto ? "auto" : format?.id, count: last.count, lengthSec: last.lengthSec, language: last.language });
+      const p = await createProject({ request: text, contentType: type, count: last.count, lengthSec: last.lengthSec, language: last.language });
       LS.removeItem("cf-draft");
+      if (type.trim()) LS.setItem("cf-types", JSON.stringify([type.trim(), ...recentTypes.filter((t) => t !== type.trim())].slice(0, 6)));
       go("project-" + p.id);
     } catch (e) {
       toast(e.message, true);
@@ -50,19 +49,12 @@ function HomePage() {
       onKeyDown=${(e) => e.key === "Enter" && (e.metaKey || e.ctrlKey) && generate()} autofocus />
     ${!text && html`<div class="chips" style="margin-top:10px">${EXAMPLES.map((ex) => html`<button class="chip" style="font-size:14px" onClick=${() => setText(ex)}>💡 ${ex.replace(/^Make /, "").slice(0, 48)}…</button>`)}</div>`}
 
-    <div class="row" style="margin-top:22px">
-      <span class="lbl" style="margin:0">Style:</span>
-      <button class="chip on" onClick=${() => setPick(!pick)} disabled=${!formats}>
-        ${format ? `${format.emoji} ${format.name}` : "…"}
-        ${auto && html`<span class="small" style="opacity:.7"> (picked for you)</span>`}
-        <span class="small" style="opacity:.7"> ${pick ? "▴" : "Change ▾"}</span>
-      </button>
+    <div style="margin-top:22px">
+      <label class="lbl">What type of content? <span class="small dim">(optional: leave empty and I'll figure it out)</span></label>
+      <input class="input" value=${type} placeholder="e.g. scary stories with a twist, fast facts, gym motivation, product reviews"
+        onInput=${(e) => setType(e.target.value)} onKeyDown=${(e) => e.key === "Enter" && generate()} />
+      ${recentTypes.length > 0 && html`<div class="chips" style="margin-top:8px">${recentTypes.map((t) => html`<button class=${"chip" + (t === type ? " on" : "")} style="font-size:14px;min-height:40px" onClick=${() => setType(t === type ? "" : t)}>${t}</button>`)}</div>`}
     </div>
-    ${pick && html`<div style="margin-top:12px"><div class="chips">
-      <button class=${"chip" + (auto ? " on" : "")} onClick=${() => (setLast({ ...last, formatId: "auto" }), setPick(false))}>✨ Auto</button>
-      ${formats.map((f) => html`<button class=${"chip" + (!auto && format?.id === f.id ? " on" : "")} title=${f.description}
-        onClick=${() => (setLast({ ...last, formatId: f.id }), setPick(false))}>${f.emoji} ${f.name}</button>`)}
-    </div>${format && html`<p class="small dim" style="margin:8px 0 0">${format.emoji} ${format.name}: ${format.description}</p>`}</div>`}
 
     <details style="margin-top:16px"><summary>More options</summary>
       <div class="card" style="display:grid;gap:18px">
@@ -70,7 +62,7 @@ function HomePage() {
           ${[0, 1, 3, 5, 10, 20].map((n) => html`<button class=${"chip" + ((last.count || 0) === n ? " on" : "")} onClick=${() => setLast({ ...last, count: n || undefined })}>${n === 0 ? `Auto (${parseCount(text)})` : n}</button>`)}
         </div></div>
         <div><label class="lbl">How long?</label><div class="chips">
-          ${[0, 30, 45, 60].map((n) => html`<button class=${"chip" + ((last.lengthSec || 0) === n ? " on" : "")} onClick=${() => setLast({ ...last, lengthSec: n || undefined })}>${n === 0 ? `Style default (${format?.lengthSec || 40}s)` : `${n} sec`}</button>`)}
+          ${[0, 30, 45, 60].map((n) => html`<button class=${"chip" + ((last.lengthSec || 0) === n ? " on" : "")} onClick=${() => setLast({ ...last, lengthSec: n || undefined })}>${n === 0 ? "Auto" : `${n} sec`}</button>`)}
         </div></div>
         <div><label class="lbl">Language</label>
           <select class="input" value=${last.language || "English"} onChange=${(e) => setLast({ ...last, language: e.target.value })}>${LANGS.map((l) => html`<option>${l}</option>`)}</select>
@@ -79,13 +71,13 @@ function HomePage() {
     </details>
 
     ${practice && html`<div class="banner warn" style="margin-top:18px">
-      <span>🧪</span><span class="small" style="flex:1;min-width:200px"><b>Practice mode:</b> template scripts, color backgrounds and no voice (text + music). Connect AI for real scripts, voices and pictures.</span>
+      <span>🧪</span><span class="small" style="flex:1;min-width:200px"><b>Practice mode:</b> template scripts, color backgrounds and no voice (text + music). Connect an AI writer for real scripts.</span>
       <a href="#connect" class="btn small">🔌 Connect AI</a>
     </div>`}
 
     <div class="gen-bar">
-      <button class="btn primary huge" onClick=${generate} disabled=${busy || !formats}>${busy ? html`<span class="spin">◐</span>` : "GENERATE VIDEOS"}</button>
-      <p class="dim small" style="text-align:center;margin-top:10px">${count} video${count > 1 ? "s" : ""} · ${format ? `${auto ? "✨ " : ""}${format.emoji} ${format.name}` : "…"} · about ${length} sec each${last.language && last.language !== "English" ? ` · ${last.language}` : ""}</p>
+      <button class="btn primary huge" onClick=${generate} disabled=${busy}>${busy ? html`<span class="spin">◐</span>` : "GENERATE VIDEOS"}</button>
+      <p class="dim small" style="text-align:center;margin-top:10px">${count} video${count > 1 ? "s" : ""}${type.trim() ? ` · ${type.trim().slice(0, 40)}` : ""}${last.lengthSec ? ` · ${last.lengthSec} sec each` : ""}${last.language && last.language !== "English" ? ` · ${last.language}` : ""}</p>
     </div>
 
     ${recent?.length > 0 && html`<div style="margin-top:40px">
@@ -182,7 +174,7 @@ function ProjectPage({ id }) {
     ${p.deletedAt && html`<div class="banner warn" style="margin-top:14px">This project is in the trash.
       <button class="btn small primary" onClick=${() => update("projects", id, { deletedAt: null })}>Restore it</button></div>`}
     ${!videos.length && !p.ideaError && html`<div class="card" style="margin-top:20px;text-align:center;padding:40px">
-      <div style="font-size:48px" class="spin">🧠</div><h2 style="margin-top:12px">Coming up with ${p.count} video ideas…</h2><p class="dim">This takes a few seconds.</p></div>`}
+      <div style="font-size:48px" class="spin">🧠</div><h2 style="margin-top:12px">${p.styleReady ? `Coming up with ${p.count} video idea${p.count > 1 ? "s" : ""}…` : "Working out the style…"}</h2><p class="dim">This takes a few seconds.</p></div>`}
     ${p.ideaError && html`<div style="margin-top:20px"><${ErrorBox} err=${p.ideaError} onAction=${(a) => retryIdeas(id, a === "backup")} /></div>`}
 
     ${videos.length > 0 && html`
@@ -243,7 +235,8 @@ function VideoCard({ v }) {
   const errStep = STEPS.find((k) => v.steps[k].status === "error");
   const err = errStep && v.steps[errStep].error;
   const current = STEPS.find((k) => v.steps[k].status === "working");
-  const practice = Object.values(v.steps).some((s) => String(s.provider || "").split(", ").some((id) => PRACTICE_IDS.has(id)));
+  // "practice" only when the script itself came from templates (no voice / color backgrounds can be a choice)
+  const practice = v.steps.script.provider === "offline-writer";
   const script = v.steps.script.output;
   const fname = `${safeName(v.title)}.${v.steps.assemble.output?.ext || "mp4"}`;
   const act = async (a, step) => {
@@ -266,7 +259,7 @@ function VideoCard({ v }) {
     </div>
     <div class="vbody">
       <div style="font-weight:700;line-height:1.3">${v.title}</div>
-      ${practice && html`<div><span class="badge offline" title="Made with practice tools. Connect AI for full quality.">🧪 Practice quality</span></div>`}
+      ${practice && html`<div><span class="badge offline" title="The script came from practice templates. Connect an AI writer for real scripts.">🧪 Practice quality</span></div>`}
       ${err && html`<${ErrorBox} err=${err} onAction=${(a) => act(a, errStep)} />`}
       ${finalKey && html`<button class="btn primary" onClick=${async () => downloadBlob(await blobs.get(finalKey), fname)}>⬇ DOWNLOAD</button>`}
       <div class="row" style="gap:6px;flex-wrap:nowrap">
@@ -357,69 +350,69 @@ function ProjectRow({ p, trash }) {
     </div></div>`;
 }
 
-// ---------------------------------------------------------------- formats
-const CAPTIONS = [["bold-yellow", "Bold yellow"], ["clean-white", "Clean white"], ["red-highlight", "Red highlight"], ["glitch", "Glitch"]];
-const MUSIC = [["chill-pad", "Chill"], ["upbeat-pulse", "Upbeat"], ["tense-pulse", "Dramatic"], ["dark-drone", "Dark"], ["eerie-tone", "Eerie"], ["none", "No music"]];
-function FormatsPage() {
-  const data = useData(listFormats);
-  const [editing, setEditing] = useState(null);
-  return html`<div>
-    <div class="row" style="margin-top:16px"><h1>📜 Formats</h1><span class="spacer"></span>
-      <button class="btn primary small" onClick=${async () => setEditing(await createFormat())}>✚ New format</button></div>
-    <p class="dim" style="margin-top:0">Reusable recipes: hook, structure, look, voice, captions and music.</p>
-    <div class="grid">${(data || []).map((f) => html`<div class="card" style=${"display:flex;flex-direction:column;gap:10px" + (f.isDefault ? ";border-color:var(--amber)" : "")}>
-      <div class="row"><span style="font-size:30px">${f.emoji}</span><div style="flex:1"><b>${f.name}</b>${f.isDefault && html`<div class="small" style="color:var(--amber)">★ Default</div>`}</div></div>
-      <p class="small dim" style="margin:0;flex:1">${f.description}</p>
-      <div class="small dim">${f.lengthSec}s · ${CAPTIONS.find((c) => c[0] === f.captionStyle)?.[1] || "Bold yellow"} captions · ${MUSIC.find((m) => m[0] === f.musicStyle)?.[1] || "Chill"}</div>
-      <div class="row" style="gap:8px"><button class="btn small" style="flex:1" onClick=${() => setEditing(f)}>✏️ Edit</button>
-        ${!f.isDefault && html`<button class="btn small" style="flex:1" onClick=${async () => (await setDefaultFormat(f.id), toast("Default set ★"))}>★ Default</button>`}</div>
-      <div class="row" style="gap:8px">
-        <button class="btn small" style="flex:1" onClick=${async () => (await createFormat({ ...f, name: f.name + " (copy)" }), toast("Copied ✓"))}>📄 Duplicate</button>
-        <button class="btn small danger" style="flex:1" onClick=${async () => {
-          if (await confirmBox({ title: `Delete “${f.name}”?`, body: "Projects already made with it are not affected.", yes: "Delete", danger: true })) (await deleteFormat(f.id), toast("Deleted"));
-        }}>🗑 Delete</button></div>
-    </div>`)}</div>
-    <button class="btn small" style="margin-top:24px" onClick=${async () => (await restoreStarters(), toast("Starter formats restored"))}>♻️ Bring back missing starter formats</button>
-    ${editing && html`<${FormatEditor} f=${editing} onClose=${() => setEditing(null)} />`}
-  </div>`;
-}
-function FormatEditor({ f, onClose }) {
-  const [v, setV] = useState(f);
-  const [state, setState] = useState("saved");
-  const first = useRef(true);
-  const timer = useRef();
-  useEffect(() => {
-    if (first.current) return void (first.current = false);
-    setState("saving");
-    clearTimeout(timer.current);
-    timer.current = setTimeout(async () => {
-      await update("formats", f.id, cleanFormat(v));
-      setState("saved");
-    }, 500);
-  }, [v]);
-  const set = (k) => (e) => setV({ ...v, [k]: e.target.value });
-  const field = (k, label, hint, rows = 2) => html`<div><label class="lbl">${label} <span class="small dim">${hint}</span></label><textarea class="input" rows=${rows} value=${v[k] || ""} onInput=${set(k)} /></div>`;
-  const chips = (k, opts) => html`<div class="chips">${opts.map(([val, l]) => html`<button class=${"chip" + (String(v[k]) === String(val) ? " on" : "")} onClick=${() => setV({ ...v, [k]: val })}>${l}</button>`)}</div>`;
-  return html`<${Modal} onClose=${onClose}>
-    <div class="row"><h2 style="margin:0">Edit format</h2><span class="spacer"></span><span class="saved" style=${state === "saving" ? "color:var(--amber)" : ""}>${state === "saved" ? "✓ Saved" : "Saving…"}</span></div>
-    <div style="display:grid;gap:14px;margin-top:14px">
-      <div class="row" style="align-items:flex-end"><div style="width:80px"><label class="lbl">Icon</label><input class="input" value=${v.emoji} maxlength="4" onInput=${set("emoji")} style="text-align:center;font-size:22px" /></div>
-        <div style="flex:1"><label class="lbl">Name</label><input class="input" value=${v.name} onInput=${set("name")} /></div></div>
-      ${field("description", "What is it?", "one line")}${field("hookStyle", "Hook", "how the first line grabs")}${field("structure", "Story structure", "beat by beat", 3)}
-      ${field("visualStyle", "Look", "what the pictures look like")}${field("voiceStyle", "Voice", "how the narrator sounds", 1)}
-      <div><label class="lbl">Captions</label>${chips("captionStyle", CAPTIONS)}</div>
-      <div><label class="lbl">Background music</label>${chips("musicStyle", MUSIC)}</div>
-      <div><label class="lbl">Length</label>${chips("lengthSec", [20, 30, 45, 60, 90].map((n) => [n, n + "s"]))}</div>
-    </div>
-    <button class="btn primary" style="width:100%;margin-top:18px" onClick=${onClose}>DONE</button>
-  <//>`;
+// ---------------------------------------------------------------- connect AI (grouped by job)
+const KEY_LINKS = Object.fromEntries(KEY_DEFS.map((d) => [d.name, d.url]));
+const ROLES = [
+  {
+    id: "writer", icon: "🧠", title: "Writer", what: "Writes the ideas, scripts and style.", models: true,
+    options: [
+      { id: "claude-account", label: "Your Claude account", note: "Uses your Claude plan, no key. Only when the app is open inside Claude.", claude: true },
+      { id: "anthropic", label: "Claude API (Anthropic)", note: "Pay per use with an API key.", key: "ANTHROPIC_API_KEY" },
+      { id: "openai", label: "OpenAI API", note: "Pay per use with an API key.", key: "OPENAI_API_KEY" },
+      { id: "offline-writer", label: "Practice templates", note: "Free. Basic fill-in-the-blank scripts." },
+    ],
+  },
+  {
+    id: "voice", icon: "🎙", title: "Voice", what: "Reads the script out loud.",
+    options: [
+      { id: "elevenlabs", label: "ElevenLabs", note: "The most natural voices.", key: "ELEVENLABS_API_KEY" },
+      { id: "openai-tts", label: "OpenAI voice", note: "Good and cheap.", key: "OPENAI_API_KEY" },
+      { id: "no-voice", label: "No voice (text + music)", note: "Free. Big captions over music." },
+    ],
+  },
+  {
+    id: "visuals", icon: "👁", title: "Visuals", what: "Makes the picture for each scene.",
+    options: [
+      { id: "openai-image", label: "OpenAI images", note: "AI pictures, about $0.10 each.", key: "OPENAI_API_KEY" },
+      { id: "pexels", label: "Pexels photos", note: "Free stock photos.", key: "PEXELS_API_KEY" },
+      { id: "offline-cards", label: "Color backgrounds", note: "Free." },
+    ],
+  },
+  {
+    id: "captions", icon: "💬", title: "Caption timing", what: "Times the words on screen.",
+    options: [
+      { id: "estimated", label: "Estimated", note: "Free. Good enough for most videos." },
+      { id: "openai-whisper", label: "OpenAI exact timing", note: "Matches the voice word for word.", key: "OPENAI_API_KEY" },
+    ],
+  },
+  {
+    id: "chat", icon: "🛠", title: "Change-the-app chat", what: "Fixes, adds or removes features when you ask.", models: true,
+    options: [
+      { id: "claude-account", label: "Your Claude account", note: "Uses your Claude plan, no key. Only inside Claude.", claude: true },
+      { id: "anthropic", label: "Claude API (Anthropic)", note: "Pay per use with an API key.", key: "ANTHROPIC_API_KEY" },
+      { id: "openai", label: "OpenAI API", note: "Pay per use with an API key.", key: "OPENAI_API_KEY" },
+    ],
+  },
+];
+function optionState(o) {
+  const C = CLAUDE();
+  if (o.claude) {
+    if (!C.inClaude) return { ok: false, why: "Open the app inside Claude to use this." };
+    if (C.declined) return { ok: false, why: "Not allowed. Reload and press Allow when Claude asks." };
+    if (!C.sample) return { ok: false, why: "Connecting to Claude…" };
+    return { ok: true };
+  }
+  if (o.key) {
+    if (!canFetch()) return { ok: false, why: "Not available inside Claude. Use the downloaded-file version for this." };
+    return keys.get(o.key) ? { ok: true } : { ok: false, why: "Needs a key", needsKey: true };
+  }
+  return { ok: true };
 }
 
-// ---------------------------------------------------------------- connect AI
 function ConnectPage() {
-  const k = useData(async () => keys.all());
-  const [value, setValue] = useState("");
-  const [pick, setPick] = useState("");
+  useData(async () => keys.all()); // re-render when keys change
+  const [roles, setRoles] = useState(() => loadSetting("cf-roles", {}));
+  const [models, setModels] = useState(() => loadSetting("cf-models", {}));
   const [results, setResults] = useState({});
   const tested = useRef(false);
   const test = async (name) => {
@@ -428,58 +421,78 @@ function ConnectPage() {
     setResults((x) => ({ ...x, [name]: r }));
   };
   useEffect(() => {
-    if (!k || tested.current) return;
+    if (tested.current || !canFetch()) return;
     tested.current = true;
-    KEY_DEFS.filter((d) => k[d.name]).forEach((d) => test(d.name));
-  }, [k]);
-  const save = () => {
-    const name = pick || detectKey(value);
-    if (!value.trim()) return toast("Paste a key first", true);
-    if (!name) {
-      setPick(KEY_DEFS[0].name);
-      return toast("I couldn't tell which service that's for. Pick it from the list, then save.", true);
-    }
-    keys.set(name, value);
-    setValue("");
-    setPick("");
-    toast(`Saved ${KEY_DEFS.find((d) => d.name === name).label} ✓`);
-    test(name);
+    KEY_DEFS.filter((d) => keys.get(d.name)).forEach((d) => test(d.name));
+  }, []);
+  const choose = (role, id) => {
+    const next = { ...roles, [role]: id };
+    setRoles(next);
+    saveSetting("cf-roles", next);
   };
-  return html`<div style="max-width:760px;margin:0 auto">
+  const setModel = (role, m) => {
+    const next = { ...models, [role]: m };
+    setModels(next);
+    saveSetting("cf-models", next);
+  };
+  const C = CLAUDE();
+  return html`<div style="max-width:820px;margin:0 auto">
     <h1 style="margin-top:16px">🔌 Connect AI</h1>
-    <p class="dim" style="margin-top:0">Paste a key from any of these. <b>One is enough to start</b>; more means better voices and pictures. Without keys it still works in practice mode.</p>
-    <div class="card" style="margin-bottom:16px"><b>Quickest setup:</b>
-      <ol class="small" style="margin:6px 0 0;padding-left:20px;line-height:1.8">
-        <li>Click <b>Get a key ↗</b> next to a service and create a key on their site.</li>
-        <li>Copy it, paste it below and press <b>SAVE KEY</b>.</li><li>Green dot = working. Go make videos.</li></ol></div>
-    <div class="card" style="display:grid;gap:14px">
-      <div><label class="lbl">Paste an API key</label>
-        <div class="row">
-          <input class="input" style="flex:1;min-width:220px;font-family:monospace" placeholder="sk-ant-…  /  sk-…  /  pexels key" value=${value}
-            onInput=${(e) => setValue(e.target.value)} onKeyDown=${(e) => e.key === "Enter" && save()} autocomplete="off" spellcheck="false" />
-          ${pick && html`<select class="input" style="width:auto" value=${pick} onChange=${(e) => setPick(e.target.value)}>${KEY_DEFS.map((d) => html`<option value=${d.name}>${d.label}</option>`)}</select>`}
-          <button class="btn primary" onClick=${save}>SAVE KEY</button>
-        </div>
-        <p class="small dim" style="margin:6px 0 0">I'll figure out which service it's for. Keys stay in this browser only and go straight to that service.</p>
-      </div>
-      ${KEY_DEFS.map((d) => {
-        const has = k?.[d.name];
-        const r = results[d.name];
-        return html`<div class="row" style="gap:10px;padding:8px 0;border-top:1px solid var(--line)">
-          <span style="font-size:20px">${!has ? "⚪" : r && !r.ok ? "🔴" : "🟢"}</span>
-          <div style="flex:1;min-width:180px"><b>${d.label}</b> <span class="small dim">· ${d.unlocks}</span>
-            <div class="small dim">${has ? html`<code>${mask(has)}</code>` : html`<a href=${d.url} target="_blank" rel="noreferrer" style="text-decoration:underline">Get a key ↗</a>`}
-              ${r && html`<span style=${"margin-left:8px;color:" + (r.ok ? "var(--green)" : "var(--red)")}>${r.message}</span>`}</div></div>
-          ${has && html`<button class="btn small" onClick=${() => test(d.name)}>Test</button>
-            <button class="btn small danger" onClick=${async () => {
-              if (await confirmBox({ title: `Disconnect ${d.label}?`, body: "Videos will use the next available option.", yes: "Disconnect", danger: true })) keys.set(d.name, "");
-            }}>✕</button>`}
-        </div>`;
-      })}
-    </div>
-    <a href="#make" class="btn primary" style="width:100%;margin-top:18px">DONE: MAKE VIDEOS</a>
+    <p class="dim" style="margin-top:0">Pick what does each job. Anything not set up falls back to the free option, so the app always works.
+      ${C.inClaude ? " You're inside Claude, so the Writer and the chat can run on your Claude account with no key." : " Keys stay in this browser and go straight to each service."}</p>
+    ${C.inClaude && html`<div class="banner warn" style="margin-bottom:14px"><span class="small">Inside Claude, the page can't reach outside services (ElevenLabs, OpenAI, Pexels), so voice and AI pictures are off here. For those, use the downloaded-file version of the app.</span></div>`}
+    <div style="display:grid;gap:16px">${ROLES.map((role) => {
+      const states = role.options.map((o) => ({ o, st: optionState(o) }));
+      const auto = states.find((x) => x.st.ok)?.o.id;
+      const sel = roles[role.id] && states.find((x) => x.o.id === roles[role.id]) ? roles[role.id] : auto;
+      const selected = states.find((x) => x.o.id === sel);
+      const usingFallback = roles[role.id] && roles[role.id] !== sel;
+      return html`<div class="card">
+        <div class="row" style="margin-bottom:4px"><span style="font-size:26px">${role.icon}</span><div style="flex:1"><b style="font-size:18px">${role.title}</b><div class="small dim">${role.what}</div></div></div>
+        <div style="display:grid;gap:8px;margin-top:10px">${states.map(({ o, st }) => html`<${RoleOption} o=${o} st=${st} on=${o.id === sel} onPick=${() => choose(role.id, o.id)} result=${o.key && results[o.key]} onTest=${() => test(o.key)} />`)}</div>
+        ${role.models && selected && (selected.o.id === "claude-account" || selected.o.id === "anthropic") && html`<div style="margin-top:12px"><label class="lbl small">Claude model</label>
+          <div class="chips">${CLAUDE_MODELS.map(([m, label, hint]) => html`<button class=${"chip" + ((models[role.id] || "claude-sonnet-5-5") === m ? " on" : "")} title=${hint} onClick=${() => setModel(role.id, m)}>${label} <span class="small" style="opacity:.7">${hint}</span></button>`)}</div></div>`}
+        ${usingFallback && html`<p class="small" style="margin:10px 0 0;color:#ffe0a0">Your pick isn't ready yet, so “${selected?.o.label}” is used for now.</p>`}
+      </div>`;
+    })}</div>
+    <button class="btn primary" style="width:100%;margin-top:18px" onClick=${() => go("make")}>DONE: MAKE VIDEOS</button>
   </div>`;
 }
+
+function RoleOption({ o, st, on, onPick, result, onTest }) {
+  const [val, setVal] = useState("");
+  const has = o.key && keys.get(o.key);
+  const save = () => {
+    if (!val.trim()) return toast("Paste the key first", true);
+    keys.set(o.key, val);
+    setVal("");
+    toast("Key saved ✓");
+    onPick();
+    setTimeout(onTest, 50);
+  };
+  return html`<div class=${"roleopt" + (on ? " on" : "") + (st.ok ? "" : " off")}>
+    <button class="roleopt-main" onClick=${onPick}>
+      <span class="radio">${on ? "●" : "○"}</span>
+      <span style="flex:1;text-align:left"><b>${o.label}</b><span class="small dim"> · ${o.note}</span>
+        ${!st.ok && !st.needsKey && html`<div class="small" style="color:#ffe0a0">${st.why}</div>`}</span>
+    </button>
+    ${o.key && canFetch() && html`<div class="row" style="gap:8px;margin:8px 0 0 34px">
+      ${has
+        ? html`<code class="small dim">${mask(has)}</code>
+            ${result && html`<span class="small" style=${"color:" + (result.ok ? "var(--green)" : "var(--red)")}>${result.message}</span>`}
+            <span class="spacer"></span>
+            <button class="btn small" onClick=${onTest}>Test</button>
+            <button class="btn small danger" onClick=${async () => {
+              if (await confirmBox({ title: "Remove this key?", body: "Anything using it falls back to the next option.", yes: "Remove", danger: true })) keys.set(o.key, "");
+            }}>✕</button>`
+        : html`<input class="input" style="flex:1;min-width:200px;font-family:monospace;padding:10px 12px" placeholder="Paste key" value=${val}
+              onInput=${(e) => setVal(e.target.value)} onKeyDown=${(e) => e.key === "Enter" && save()} autocomplete="off" spellcheck="false" />
+            <button class="btn small primary" onClick=${save}>Save key</button>
+            <a class="small" href=${KEY_LINKS[o.key]} target="_blank" rel="noreferrer" style="text-decoration:underline">Get a key ↗</a>`}
+    </div>`}
+  </div>`;
+}
+
 async function testKey(name, value) {
   const calls = {
     // browsers may only call the messages endpoint; a 1-token reply costs a tiny fraction of a cent
@@ -561,30 +574,7 @@ function SystemPage() {
           changed();
         }}>Protect my projects</button>`}</div>`)}
       <div class="card"><b>💸 Spend (estimate)</b><div class="small dim">${money(info.cost)} total</div></div>
-      <div class="card"><b>🔌 AI</b><div class="small dim">${practiceMode() ? "Practice mode: connect AI for full quality." : "Connected."}</div><a href="#connect" class="btn small" style="margin-top:8px">Manage AI keys</a></div>
+      <div class="card"><b>🔌 AI</b><div class="small dim">${practiceMode() ? "Practice mode: connect an AI writer for real scripts." : "Connected."}</div><a href="#connect" class="btn small" style="margin-top:8px">Choose AI for each job</a></div>
     </div>`}
-    <details style="margin-top:20px"><summary>Advanced: provider order</summary>
-      <p class="small dim">Top = tried first. If it fails, the next one is used automatically.</p>
-      <${ProviderOrder} />
-    </details>
   </div>`;
-}
-function ProviderOrder() {
-  const [order, setOrder] = useState(() => loadLS("cf-order", {}));
-  useData(async () => keys.all());
-  const CAPS = { llm: "🧠 Writer", voice: "🎙 Voice", image: "👁 Visuals", captions: "💬 Captions" };
-  return html`<div style="display:grid;gap:14px">${Object.entries(REGISTRY).map(([cap, list]) => {
-    const saved = order[cap] || [];
-    const sorted = [...list].sort((a, b) => (saved.indexOf(a.id) < 0 ? 99 : saved.indexOf(a.id)) - (saved.indexOf(b.id) < 0 ? 99 : saved.indexOf(b.id)));
-    return html`<div class="card"><b>${CAPS[cap]}</b><div style="display:grid;gap:6px;margin-top:8px">${sorted.map((p, i) => html`<div class="row" style="gap:8px">
-      <span class="dim" style="width:22px">${i + 1}.</span><span style="flex:1">${p.available() ? "🟢" : "⚪"} ${p.label}${p.offline ? html` <span class="badge offline">practice</span>` : ""}</span>
-      <button class="btn small" disabled=${i === 0} onClick=${() => {
-        const ids = sorted.map((x) => x.id);
-        [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
-        const next = { ...order, [cap]: ids };
-        setOrder(next);
-        LS.setItem("cf-order", JSON.stringify(next));
-        toast("Saved ✓");
-      }}>↑</button></div>`)}</div></div>`;
-  })}</div>`;
 }

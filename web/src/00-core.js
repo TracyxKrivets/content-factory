@@ -59,6 +59,20 @@ const LS = {
   },
 };
 
+const loadSetting = (k, d) => {
+  try {
+    return JSON.parse(LS.getItem(k) || "null") ?? d;
+  } catch {
+    return d;
+  }
+};
+const saveSetting = (k, v) => {
+  LS.setItem(k, JSON.stringify(v));
+  changed();
+};
+// when the shell finishes connecting to Claude, re-render
+window.addEventListener("cf-claude", () => changed());
+
 // change bus: UI re-reads after any write
 const bus = new EventTarget();
 let changeTimer = null;

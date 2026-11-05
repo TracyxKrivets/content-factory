@@ -282,25 +282,52 @@ async function resumeAll() {
     await db.put("videos", { ...v, steps, status: "queued" });
     enqueue(v.id);
   }
-  for (const p of await db.all("projects")) if (p.status === "planning" && !p.deletedAt && !p.ideaError) planIdeas(p.id);
+  for (const p of await db.all("projects")) if (p.status === "planning" && !p.deletedAt && !p.ideaError) planProject(p.id);
 }
 
 // ---------------------------------------------------------------- projects
-async function createProject({ request, formatId, count, lengthSec, language }) {
+async function createProject({ request, contentType, count, lengthSec, language }) {
   request = request.trim().slice(0, 2000);
   if (!request) throw new Error("Type what you want to make first ✍️");
-  const formats = await listFormats();
-  const format = (formatId && formatId !== "auto" && formats.find((f) => f.id === formatId)) || detectFormat(request, formats);
+  contentType = (contentType || "").trim().slice(0, 200);
   const n = count && count > 0 ? Math.min(50, count) : parseCount(request);
   const p = {
-    id: uid(), title: request.replace(/^(please\s+)?(make|create|generate)\s+(me\s+)?/i, "").slice(0, 70), request,
-    format: { ...format }, count: n, lengthSec: lengthSec || format.lengthSec, language: language || "English",
+    id: uid(), title: request.replace(/^(please\s+)?(make|create|generate)\s+(me\s+)?/i, "").slice(0, 70), request, contentType,
+    format: fallbackStyle(contentType, request), styleReady: false, count: n, lengthSec: lengthSec || null, language: language || "English",
     status: "planning", ideas: [], avoid: [], cost: 0, deletedAt: null, createdAt: now(), updatedAt: now(),
   };
   await db.put("projects", p);
-  if (n === 1) await createVideos(p, [{ title: p.title, angle: request }]);
-  else planIdeas(p.id);
+  planProject(p.id);
   return p;
+}
+
+/** Work out the style from the content type (AI if connected), then ideas, then videos. */
+async function planProject(projectId) {
+  let p = await db.get("projects", projectId);
+  if (!p) return;
+  if (!p.styleReady) {
+    let style = p.format;
+    const prov = chain("llm", p.avoid || []).find((x) => !x.offline);
+    if (prov) {
+      try {
+        const key = "style:" + (await hash(p.contentType, p.contentType ? "" : p.request));
+        let j = await kv.get(key);
+        if (!j) {
+          const r = await prov.complete({ task: "style", tier: "cheap", ...designPrompt(p.contentType, p.request), input: {} });
+          j = parseJson(r.text);
+          await kv.set(key, j);
+          await addCost(projectId, r.cost);
+        }
+        style = cleanStyle(j, p.format);
+      } catch (e) {
+        console.warn("style design failed, using the built-in match", e);
+      }
+    }
+    p = await update("projects", projectId, (x) => ({ format: style, styleReady: true, lengthSec: x.lengthSec || style.lengthSec }));
+  }
+  if (p.count === 1) {
+    if (!(await db.byIndex("videos", "projectId", projectId)).length) await createVideos(p, [{ title: p.title, angle: p.request }]);
+  } else await planIdeas(projectId);
 }
 
 async function planIdeas(projectId) {
@@ -435,7 +462,7 @@ async function retryIdeas(projectId, backup) {
     status: "planning", ideaError: null,
     avoid: backup && p.ideaError?.provider ? [...new Set([...(p.avoid || []), p.ideaError.provider])] : p.avoid,
   }));
-  planIdeas(projectId);
+  planProject(projectId);
 }
 
 /** Permanently delete trashed projects and their videos/files (frees browser storage). */
