@@ -122,7 +122,7 @@ const STEP_FNS = {
     // platforms that only pay for 1 min+ videos: if the narration came out short, add real content (never padding)
     const min = ctx.project.minSec;
     let cost = r.cost;
-    for (let round = 0; min && r.output.duration + 0.8 < min + 1 && round < 2 && ctx.video.steps.script.provider !== "edited" && ctx.video.steps.visuals.status !== "done"; round++) {
+    for (let round = 0; min && r.output.duration + 0.8 < min + 1 && round < 3 && ctx.video.steps.script.provider !== "edited" && ctx.video.steps.visuals.status !== "done"; round++) {
       const P = ctx.project, s = cur;
       const need = Math.ceil(min + 4 - r.output.duration);
       const issues = [`The narration runs ${r.output.duration.toFixed(0)}s but must run over ${min + 3}s to earn money on ${pickPlatforms(P.platforms).filter((p) => p.payMinSec).map((p) => p.name).join(" and ")}. Add about ${need} seconds of NEW content (more detail, another beat, a stronger ending), not filler or repetition.`];
@@ -289,7 +289,7 @@ async function runVideo(id) {
     video = await setStep(id, step, { status: "working", attempts: (state.attempts || 0) + 1, error: undefined });
     try {
       const res = await STEP_FNS[step]({
-        project, video, state: video.steps[step],
+        project: videoProject(project, video), video, state: video.steps[step],
         progress: async (output) => (video = await setStep(id, step, { output })),
         patchStep: async (s, patch) => (video = await setStep(id, s, patch)),
         setLive: (o) => {
@@ -336,6 +336,21 @@ async function resumeAll() {
 }
 
 // ---------------------------------------------------------------- projects
+/**
+ * The project as one video sees it: its own platform, and a length that reaches that platform's
+ * pay minimum (raised automatically if the chosen length is too short).
+ */
+function videoProject(p, v) {
+  const plats = v.platform ? [v.platform] : p.platforms || [];
+  const min = payMinSec(plats);
+  const base = p.lengthSec || p.format?.lengthSec || 30;
+  return {
+    ...p, platforms: plats, minSec: min,
+    lengthSec: min ? Math.max(base, min + 9) : base,
+    aiLabel: (p.aiLabelUser ?? p.aiLabel) || hasChina(plats),
+  };
+}
+
 /** Visible AI label burned into the video (required for Chinese platforms, optional elsewhere). */
 function aiLabelText(p) {
   if (!p.aiLabel) return "";
@@ -350,8 +365,7 @@ async function createProject({ request, contentType, count, lengthSec, language,
   const p = {
     id: uid(), title: request.replace(/^(please\s+)?(make|create|generate)\s+(me\s+)?/i, "").slice(0, 70), request, contentType,
     format: fallbackStyle(contentType, request), styleReady: false, count: n, lengthSec: lengthSec || null, language: language || "English",
-    platforms: (platforms || []).filter(platformById), aiLabel: !!aiLabel || hasChina(platforms), lengthAuto: !lengthSec,
-    minSec: payMinSec(platforms) && (!lengthSec || lengthSec >= payMinSec(platforms) - 1) ? payMinSec(platforms) : 0,
+    platforms: (platforms || []).filter(platformById), aiLabelUser: !!aiLabel, lengthAuto: !lengthSec,
     refs: refs && (refs.links?.length || refs.note || refs.files?.length) ? { links: refs.links || [], note: refs.note || "", files: refs.files || [], info: null } : null,
     status: "planning", ideas: [], avoid: [], cost: 0, deletedAt: null, createdAt: now(), updatedAt: now(),
   };
@@ -387,7 +401,7 @@ async function planProject(projectId) {
         console.warn("style design failed, using the built-in match", e);
       }
     }
-    p = await update("projects", projectId, (x) => ({ format: style, styleReady: true, lengthSec: x.lengthSec || platformAutoLength(x.platforms, style.lengthSec) }));
+    p = await update("projects", projectId, (x) => ({ format: style, styleReady: true, lengthSec: x.lengthSec || style.lengthSec }));
   }
   if (p.count === 1) {
     if (!(await db.byIndex("videos", "projectId", projectId)).length) await createVideos(p, [{ title: p.title, angle: p.request }]);
@@ -426,17 +440,22 @@ async function planIdeas(projectId) {
   await createVideos(p, ideas);
 }
 
+/** One video per idea, per platform: "1 video" on TikTok + YouTube = 2 videos, each made for its platform. */
 async function createVideos(p, ideas, startIndex = 0) {
   const t = Date.now();
-  for (const [i, idea] of ideas.entries()) {
-    const v = {
-      id: uid(), projectId: p.id, index: startIndex + i, title: idea.title || `Video ${startIndex + i + 1}`,
-      idea: `${idea.title}. ${idea.angle}`.trim(), angle: idea.angle, status: "queued", steps: emptySteps(),
-      createdAt: new Date(t + i).toISOString(), updatedAt: now(),
-    };
-    await db.put("videos", v);
-    enqueue(v.id);
-  }
+  const plats = p.platforms?.length ? p.platforms : [null];
+  let i = 0;
+  for (const idea of ideas)
+    for (const platform of plats) {
+      const v = {
+        id: uid(), projectId: p.id, index: startIndex + i, title: idea.title || `Video ${startIndex + i + 1}`, platform,
+        idea: `${idea.title}. ${idea.angle}`.trim(), angle: idea.angle, status: "queued", steps: emptySteps(),
+        createdAt: new Date(t + i).toISOString(), updatedAt: now(),
+      };
+      await db.put("videos", v);
+      enqueue(v.id);
+      i++;
+    }
   await update("projects", p.id, { status: "generating" });
 }
 
@@ -518,7 +537,8 @@ async function duplicateVideo(id) {
 async function addVideos(projectId, n) {
   const p = await db.get("projects", projectId);
   const base = (await db.byIndex("videos", "projectId", projectId)).length;
-  await createVideos(p, Array.from({ length: n }, (_, i) => ({ title: `${p.title} #${base + i + 1}`, angle: `${p.request} (fresh angle #${base + i + 1})` })), base);
+  const ideasSoFar = Math.ceil(base / Math.max(1, p.platforms?.length || 1));
+  await createVideos(p, Array.from({ length: n }, (_, i) => ({ title: `${p.title} #${ideasSoFar + i + 1}`, angle: `${p.request} (fresh angle #${ideasSoFar + i + 1})` })), base);
 }
 
 async function retryIdeas(projectId, backup) {

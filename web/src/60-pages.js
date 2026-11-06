@@ -79,7 +79,7 @@ function HomePage() {
       </div>
     </div>
 
-    <${PlatformPicker} last=${last} setLast=${setLast} />
+    <${PlatformPicker} last=${last} setLast=${setLast} count=${count} />
 
     <div class="card refs" style="margin-top:22px">
       <label class="lbl" style="margin:0">🎞 Reference videos <span class="small dim">(optional: videos you're trying to make something like)</span></label>
@@ -100,7 +100,7 @@ function HomePage() {
 
     <div class="gen-bar">
       <button class="btn primary huge" onClick=${generate} disabled=${busy}>${busy ? html`<span class="spin">◐</span>` : "GENERATE VIDEOS"}</button>
-      <p class="dim small" style="text-align:center;margin-top:10px">${count} video${count > 1 ? "s" : ""}${type.trim() ? ` · ${type.trim().slice(0, 40)}` : ""}${last.lengthSec ? ` · ${last.lengthSec} sec each` : ""}${last.language && last.language !== "English" ? ` · ${last.language}` : ""}${last.platforms?.length ? ` · for ${pickPlatforms(last.platforms).map((p) => p.name.split(" ")[0]).join(", ")}` : ""}</p>
+      <p class="dim small" style="text-align:center;margin-top:10px">${last.platforms?.length ? `${count * last.platforms.length} video${count * last.platforms.length > 1 ? "s" : ""} (${count} per platform)` : `${count} video${count > 1 ? "s" : ""}`}${type.trim() ? ` · ${type.trim().slice(0, 40)}` : ""}${last.lengthSec ? ` · ${last.lengthSec} sec each` : ""}${last.language && last.language !== "English" ? ` · ${last.language}` : ""}${last.platforms?.length ? ` · for ${pickPlatforms(last.platforms).map((p) => p.name.split(" ")[0]).join(", ")}` : ""}</p>
     </div>
 
     ${recent?.length > 0 && html`<div style="margin-top:40px">
@@ -114,11 +114,11 @@ function HomePage() {
 }
 
 /** Pick where the videos will be posted. Each platform's rules shape the script, length and captions. */
-function PlatformPicker({ last, setLast }) {
+function PlatformPicker({ last, setLast, count }) {
   const ids = last.platforms || [];
   const toggle = (id) => setLast({ ...last, platforms: ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id] });
   const min = payMinSec(ids);
-  const short = min && last.lengthSec && last.lengthSec < min - 1;
+  const n = Math.max(1, count || 1);
   const payList = pickPlatforms(ids).filter((p) => p.payMinSec);
   const payers = payList.map((p) => p.name).join(" and ") + (payList.length === 1 ? " only pays" : " only pay");
   const china = hasChina(ids);
@@ -129,11 +129,9 @@ function PlatformPicker({ last, setLast }) {
     ${group("global", "Global")}
     ${group("china", "China")}
     ${ids.length > 0 && html`<div style="display:grid;gap:6px;margin-top:12px">
-      ${min > 0 && practiceMode() && html`<p class="small" style="margin:0;color:#ffe0a0">🧪 Practice templates are too short to pass 1 minute. Connect an AI writer so ${payList.map((p) => p.name).join(" and ")} videos can earn.</p>`}
-      ${min > 0 && !short && html`<p class="small" style="margin:0">⏱ ${payers} for videos over 1 minute, so ${last.lengthSec ? "each script is written to run over a minute" : "Auto length makes them about 70 seconds"}.</p>`}
-      ${short && html`<p class="small" style="margin:0;color:#ffe0a0">⚠️ ${payers} for videos over 1 minute. ${last.lengthSec}-second videos won't earn there.
-        <button class="btn small" style="margin-left:6px" onClick=${() => setLast({ ...last, lengthSec: undefined })}>Use Auto (≈70 sec)</button></p>`}
-      ${china && html`<p class="small" style="margin:0">🏷 Chinese platforms require AI content to be labelled, so an <b>AI生成</b> mark is added to every video.
+      <p class="small" style="margin:0">🎬 One video per platform, each made for that platform: ${n} × ${ids.length} = <b>${n * ids.length} video${n * ids.length > 1 ? "s" : ""}</b>.</p>
+      ${min > 0 && html`<p class="small" style="margin:0">⏱ ${payers} for videos over 1 minute, so the ${payList.map((p) => p.name.split(" ")[0]).join(" and ")} ${n * payList.length > 1 ? "videos are" : "video is"} made at least ${Math.max(last.lengthSec || 0, min + 9)} seconds${pickPlatforms(ids).length > payList.length ? `; the others keep ${last.lengthSec ? `your ${last.lengthSec} seconds` : "the Auto length"}` : ""}.</p>`}
+      ${china && html`<p class="small" style="margin:0">🏷 Chinese platforms require AI content to be labelled, so an <b>AI生成</b> mark is added to the ${pickPlatforms(ids).filter((p) => p.region === "china").map((p) => p.name.split(" ")[0]).join(", ")} video${n > 1 || pickPlatforms(ids).filter((p) => p.region === "china").length > 1 ? "s" : ""}.
         ${(last.language || "English") !== "Chinese" && html`<button class="btn small" style="margin-left:6px" onClick=${() => setLast({ ...last, language: "Chinese" })}>Make them in Chinese</button>`}</p>`}
       ${!china && html`<label class="small row" style="gap:8px;cursor:pointer"><input type="checkbox" checked=${!!last.aiLabel} onChange=${(e) => setLast({ ...last, aiLabel: e.target.checked })} /> Add a small “AI-generated” mark on the video</label>`}
       <p class="small dim" style="margin:0">Each finished video gets ready-to-paste post text per platform and a posting checklist. Earning also needs things a video can't change (followers, views, your country), so no app can promise approval. Rules checked ${RULES_CHECKED}.</p>
@@ -202,9 +200,12 @@ function ProjectPage({ id }) {
     for (const [i, v] of doneV.entries()) {
       const n = String(i + 1).padStart(2, "0");
       const b = await blobs.get(v.steps.assemble.output.key);
-      if (b) files[`${n}-${safeName(v.title)}.${v.steps.assemble.output.ext || "mp4"}`] = [new Uint8Array(await b.arrayBuffer()), { level: 0 }];
+      const pl = v.platform && platformById(v.platform);
+      const dir = pl ? safeName(pl.name.split(" ")[0]) + "/" : "";
+      if (b) files[`${dir}${n}-${safeName(v.title)}.${v.steps.assemble.output.ext || "mp4"}`] = [new Uint8Array(await b.arrayBuffer()), { level: 0 }];
       const s = v.steps.script.output;
-      captions += `${n}. ${v.title}\n${s?.caption || ""}\n${(s?.hashtags || []).join(" ")}\n\n`;
+      const post = pl && s?.posts?.[v.platform];
+      captions += `${n}. ${pl ? `[${pl.name}] ` : ""}${v.title}\n${post ? postText(post) : `${s?.caption || ""}\n${(s?.hashtags || []).join(" ")}`}\n\n`;
     }
     files["captions.txt"] = fflate.strToU8(captions);
     downloadBlob(new Blob([fflate.zipSync(files)], { type: "application/zip" }), safeName(p.title) + ".zip");
@@ -322,7 +323,8 @@ function VideoCard({ v }) {
   // "practice" only when the script itself came from templates (no voice / color backgrounds can be a choice)
   const practice = v.steps.script.provider === "offline-writer";
   const script = v.steps.script.output;
-  const fname = `${safeName(v.title)}.${v.steps.assemble.output?.ext || "mp4"}`;
+  const vp = v.platform && platformById(v.platform);
+  const fname = `${safeName(v.title)}${vp ? "-" + v.platform : ""}.${v.steps.assemble.output?.ext || "mp4"}`;
   const act = async (a, step) => {
     try {
       await videoAction(v.id, a, step);
@@ -335,6 +337,7 @@ function VideoCard({ v }) {
   const rp = live[v.id]?.render;
   return html`<div class=${"vcard" + (err ? " bad" : "")}>
     <div class="vframe">
+      ${vp && html`<div class="vplat">${vp.emoji} ${vp.name}</div>`}
       ${finalKey && videoUrl ? html`<video controls preload="metadata" playsinline src=${videoUrl} poster=${imgUrl || undefined}></video>` : html`
         ${imgUrl ? html`<img src=${imgUrl} style="opacity:.45" />` : html`<div class="pixel dim" style="font-size:34px">${err ? "⚠" : "…"}</div>`}
         <div style="position:absolute;top:14px;left:0;right:0;text-align:center" class="small">

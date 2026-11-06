@@ -380,6 +380,25 @@ const LIST_ITEMS = [
 ];
 const NUM = ["One", "Two", "Three", "Four", "Five"];
 
+// extra beats so practice scripts can reach any length (e.g. over 1 minute for TikTok pay)
+const EXTRA_LINES = [
+  "Here's the part most people skip about {S}.",
+  "Think about it this way: everyone who's good at {S} started out confused.",
+  "The first time I looked into {S}, I got this completely wrong.",
+  "And the small details matter more than you'd expect.",
+  "Little changes here add up faster than you think.",
+  "Let's slow down for a second and look at why that works.",
+  "Here's a quick example that makes it click.",
+  "Most advice about {S} leaves this part out completely.",
+  "If you only remember one thing from this video, remember this.",
+  "It sounds simple, but almost nobody does it every single time.",
+  "That's exactly why {A} matters so much.",
+  "Now here's where it gets really interesting.",
+  "Try it once and you'll notice the difference straight away.",
+  "People who get {S} right all seem to share this one habit.",
+  "So what does that actually mean for you, day to day?",
+  "Here's the simplest way to put it into practice.",
+];
 function writeScript(input) {
   const r = rng(input.idea + input.format.name);
   const S = subjectOf(input.request || input.idea);
@@ -405,6 +424,10 @@ function writeScript(input) {
       fill(pool.end[Math.floor(r() * pool.end.length)]),
     ];
   }
+  // still short of the length? add more real beats before the ending (never repeats a line)
+  const words = (ls) => ls.join(" ").split(/\s+/).length;
+  const extras = shuffle(EXTRA_LINES, r).map(fill);
+  while (words(lines) < target && extras.length) lines.splice(lines.length - 1, 0, extras.shift());
   const title = `${cap(S)}: ${cap(A)}`;
   const tag = (x) => "#" + x.toLowerCase().replace(/[^a-z0-9]/g, "");
   return {

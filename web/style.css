@@ -152,3 +152,4 @@ details.refs > summary { list-style: none; cursor: pointer; font-weight: 700; co
 .badge.plat { cursor: pointer; border: 1px solid transparent; font: inherit; font-size: 13px; padding: 4px 9px; }
 .badge.plat.ok { background: rgba(80, 220, 140, 0.14); color: var(--green); border-color: rgba(80, 220, 140, 0.35); }
 .badge.plat.warn { background: rgba(255, 200, 90, 0.14); color: #ffe0a0; border-color: rgba(255, 200, 90, 0.35); }
+.vframe .vplat { position: absolute; top: 8px; left: 8px; z-index: 2; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 12px; padding: 3px 8px; border-radius: 999px; pointer-events: none; }
