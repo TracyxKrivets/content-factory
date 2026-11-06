@@ -5,6 +5,8 @@
 **Inside Claude (free, no keys):** https://claude.ai/artifact/G6eEobvvmshFojyA5nYxEt
 The Writer and the change-the-app chat run on your Claude account. Outside services (ElevenLabs, OpenAI, Pexels) are blocked inside Claude, so videos there are text + music over color backgrounds.
 
+**Windows app:** double-click **`Content Factory.exe`**. It opens in its own window; keys, projects and videos are saved in `%APPDATA%\Content Factory`, so they're there next time. Windows may say "Windows protected your PC" the first time (the app isn't signed): click **More info → Run anyway**. Rebuild after changes: `node web/build.mjs`, then in `desktop/`: `npm install` and `npm run build:win` (output in `desktop/dist/`).
+
 **The file (all services):** open `Content Factory.html`
 
 Double-click **`Content Factory.html`**. That's it: no install, no server, no start-up.

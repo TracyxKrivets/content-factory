@@ -1,0 +1,42 @@
+{
+  "name": "content-factory",
+  "productName": "Content Factory",
+  "version": "1.0.0",
+  "description": "Make short-form videos in bulk",
+  "author": "Tracy",
+  "main": "main.js",
+  "private": true,
+  "build": {
+    "appId": "com.tracy.contentfactory",
+    "productName": "Content Factory",
+    "files": [
+      "main.js",
+      "app/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "Content Factory.exe"
+    },
+    "directories": {
+      "output": "dist"
+    }
+  },
+  "devDependencies": {
+    "electron": "^45.2.3",
+    "electron-builder": "^26.18.0"
+  },
+  "scripts": {
+    "build:win": "node -e \"require('fs').mkdirSync('app',{recursive:true});require('fs').copyFileSync('../web/dist/content-factory.html','app/index.html')\" && electron-builder --win --x64",
+    "start": "node -e \"require('fs').mkdirSync('app',{recursive:true});require('fs').copyFileSync('../web/dist/content-factory.html','app/index.html')\" && electron ."
+  }
+}
