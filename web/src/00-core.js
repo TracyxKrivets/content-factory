@@ -219,9 +219,48 @@ function detectKey(value) {
   const v = value.trim();
   if (/^sk-ant-/.test(v)) return "ANTHROPIC_API_KEY";
   if (/^sk-(proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}$/.test(v)) return "OPENAI_API_KEY";
-  if (/^sk_[a-f0-9]{40,}$/i.test(v) || /^[a-f0-9]{32}$/i.test(v)) return "ELEVENLABS_API_KEY";
+  if (/^sk_[A-Za-z0-9]{40,}$/.test(v) || /^[a-f0-9]{32}$/i.test(v)) return "ELEVENLABS_API_KEY";
   if (/^[A-Za-z0-9]{56}$/.test(v)) return "PEXELS_API_KEY";
   return null;
+}
+// keys from services this app doesn't use (yet), so we can say what they are instead of "unknown"
+const OTHER_KEYS = [
+  [/^AIza[0-9A-Za-z_-]{35}$/, "a Google (Gemini) key"],
+  [/^xai-[A-Za-z0-9]{20,}$/, "an xAI (Grok) key"],
+  [/^gsk_[A-Za-z0-9]{20,}$/, "a Groq key"],
+  [/^r8_[A-Za-z0-9]{20,}$/, "a Replicate key"],
+  [/^hf_[A-Za-z0-9]{20,}$/, "a Hugging Face key"],
+  [/^(ghp|gho|github_pat)_[A-Za-z0-9_]{20,}$/, "a GitHub token (not an AI key: don't paste it here)"],
+];
+const ENV_NAMES = { ANTHROPIC: "ANTHROPIC_API_KEY", CLAUDE: "ANTHROPIC_API_KEY", OPENAI: "OPENAI_API_KEY", SORA: "OPENAI_API_KEY", ELEVENLABS: "ELEVENLABS_API_KEY", ELEVEN: "ELEVENLABS_API_KEY", XI: "ELEVENLABS_API_KEY", PEXELS: "PEXELS_API_KEY" };
+/**
+ * Pull every key out of pasted text: one key, several, or a whole .env file / note.
+ * Returns [{ value, name (or null), named: true if the text said which service, other: what it is if unsupported }].
+ */
+function findKeys(text) {
+  const out = [];
+  const seen = new Set();
+  for (const raw of String(text || "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || /^#/.test(line)) continue;
+    // "OPENAI_API_KEY=sk-..." / "openai: sk-..." / "export PEXELS_API_KEY='...'"
+    const m = line.match(/^(?:export\s+)?([A-Za-z][A-Za-z0-9_ ]*?)\s*[:=]\s*["']?([^\s"']{16,})["']?$/);
+    let hint = null, tokens;
+    if (m) {
+      const word = m[1].toUpperCase().replace(/[^A-Z]/g, " ").split(/\s+/).find((w) => ENV_NAMES[w]);
+      hint = word ? ENV_NAMES[word] : null;
+      tokens = [m[2]];
+    } else tokens = line.split(/[\s,;|]+/);
+    for (let t of tokens) {
+      t = t.replace(/^["'`(<\[]+|["'`)>\].,]+$/g, "");
+      if (t.length < 20 || seen.has(t) || /^https?:/i.test(t) || !/^[A-Za-z0-9_\-.]+$/.test(t)) continue;
+      seen.add(t);
+      const name = detectKey(t);
+      const other = OTHER_KEYS.find(([re]) => re.test(t))?.[1] || null;
+      out.push({ value: t, name: hint || name, named: !!hint, other: hint || name ? null : other });
+    }
+  }
+  return out;
 }
 const mask = (v) => (v ? `${v.slice(0, 6)}…${v.slice(-4)}` : "");
 

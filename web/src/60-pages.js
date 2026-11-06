@@ -526,6 +526,7 @@ function ConnectPage() {
     <h1 style="margin-top:16px">🔌 Connect AI</h1>
     <p class="dim" style="margin-top:0">Pick what does each job. Anything not set up falls back to the free option, so the app always works.
       ${C.inClaude ? " You're inside Claude, so the Writer and the chat can run on your Claude account with no key." : " Keys stay in this browser and go straight to each service."}</p>
+    <${KeyDrop} />
     ${C.inClaude && html`<div class="banner warn" style="margin-bottom:14px"><span class="small">Inside Claude, the page can't reach outside services (ElevenLabs, OpenAI, Pexels), so voice and AI pictures are off here. For those, use the downloaded-file version of the app.</span></div>`}
     <div style="display:grid;gap:16px">${ROLES.map((role) => {
       const states = role.options.map((o) => ({ o, st: optionState(o) }));
@@ -621,6 +622,78 @@ async function testKey(name, value) {
   } catch {
     return { ok: false, message: "Couldn't reach the service. Check your internet." };
   }
+}
+
+/** Which jobs a saved key powers, e.g. "Writer, Voice, Visuals". */
+const jobsFor = (name) => ROLES.filter((r) => r.options.some((o) => o.key === name)).map((r) => r.title);
+const keyLabel = (name) => KEY_DEFS.find((d) => d.name === name)?.label || name;
+
+/** Paste any key(s): the app works out which service each one is for and files it there. */
+function KeyDrop() {
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [out, setOut] = useState([]);
+  const live = canFetch();
+  const file = (value, name, note = "") => {
+    const had = keys.get(name);
+    keys.set(name, value);
+    return { ok: true, value, name, text: `${keyLabel(name)} key saved${had && had !== value ? " (replaced the old one)" : ""}${note}. Used for: ${jobsFor(name).join(", ")}.` };
+  };
+  const run = async (raw) => {
+    const found = findKeys(raw);
+    if (!found.length) {
+      setOut([{ ok: false, text: "I couldn't find a key in that. Copy the whole key from the service's website and paste it here." }]);
+      return;
+    }
+    setBusy(true);
+    setText("");
+    const res = [];
+    for (const k of found) {
+      if (k.other) {
+        res.push({ ok: false, value: k.value, text: `That looks like ${k.other}. This app doesn't use it, so it wasn't saved.` });
+        continue;
+      }
+      if (k.name) {
+        if (!live) {
+          res.push(file(k.value, k.name));
+          continue;
+        }
+        const t = await testKey(k.name, k.value);
+        if (t.ok) res.push(file(k.value, k.name, " and works ✓"));
+        else if (/rejected/.test(t.message)) res.push({ ok: false, value: k.value, text: `This looks like ${/^[AEIOU]/.test(keyLabel(k.name)) ? "an" : "a"} ${keyLabel(k.name)} key, but ${keyLabel(k.name)} rejected it. Copy it again (the whole thing) or make a new one.` });
+        else res.push(file(k.value, k.name, " (couldn't check it right now)"));
+        continue;
+      }
+      // format doesn't say which service: ask each one (only the services this app uses)
+      if (live) {
+        let hit = null;
+        for (const d of KEY_DEFS) if ((await testKey(d.name, k.value)).ok) { hit = d.name; break; }
+        if (hit) {
+          res.push(file(k.value, hit, ", worked out by testing it"));
+          continue;
+        }
+      }
+      res.push({ ok: false, value: k.value, ask: true, text: `I can't tell which service ${mask(k.value)} is for${live ? " (no service accepted it)" : ""}. Which is it?` });
+    }
+    setOut(res);
+    setBusy(false);
+  };
+  const choose = (i, name) => setOut((o) => o.map((r, j) => (j === i ? file(r.value, name) : r)));
+  return html`<div class="card" style="margin:14px 0 18px">
+    <label class="lbl" style="margin:0 0 6px">🔑 Paste any API key</label>
+    <p class="small dim" style="margin:0 0 8px">Paste one key or several (even a whole .env file or a note). The app works out which service each key is for, checks it, and puts it in the right place. You don't need to pick anything.</p>
+    <textarea rows="2" placeholder="sk-ant-…  sk-proj-…  sk_…  (paste here)" value=${text} disabled=${busy} style="width:100%;font-family:ui-monospace,monospace"
+      onInput=${(e) => setText(e.target.value)}
+      onPaste=${(e) => { const t = e.clipboardData?.getData("text"); if (t) { e.preventDefault(); run(t); } }}></textarea>
+    <div class="row" style="gap:8px;margin-top:8px">
+      <button class="btn primary" disabled=${busy || !text.trim()} onClick=${() => run(text)}>${busy ? "Checking…" : "Add key"}</button>
+      ${busy && html`<span class="small dim">Checking with each service…</span>`}
+    </div>
+    ${out.length > 0 && html`<div style="display:grid;gap:6px;margin-top:10px">${out.map((r, i) => html`<div class="small" style=${"padding:8px 10px;border-radius:10px;background:" + (r.ok ? "rgba(80,220,140,.12)" : "rgba(255,200,90,.12)")}>
+      ${r.ok ? "✓ " : "⚠️ "}${r.text}
+      ${r.ask && html`<div class="chips" style="margin-top:6px">${KEY_DEFS.map((d) => html`<button class="chip" onClick=${() => choose(i, d.name)}>${d.label}</button>`)}</div>`}
+    </div>`)}</div>`}
+  </div>`;
 }
 
 // ---------------------------------------------------------------- system
