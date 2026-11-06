@@ -323,14 +323,15 @@ RULES
     };
   }
   // OpenAI: translate to/from the Anthropic-style messages used by the loop
-  async function callOpenAI(key, system, messages) {
-    const model = "gpt-4.1";
+  async function callOpenAI(key, system, messages, api = { url: "https://api.openai.com/v1/chat/completions", model: "gpt-4.1", who: "OpenAI" }) {
+    const model = api.model;
     const msgs = [{ role: "system", content: system }];
     for (const m of messages) {
       if (typeof m.content === "string") msgs.push({ role: m.role, content: m.content });
       else if (m.role === "assistant") {
         const text = m.content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
-        const calls = m.content.filter((c) => c.type === "tool_use").map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.input) } }));
+        // extra_content carries Gemini's thought signature, which it needs back on the next turn
+        const calls = m.content.filter((c) => c.type === "tool_use").map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.input) }, ...(c.extra ? { extra_content: c.extra } : {}) }));
         msgs.push({ role: "assistant", content: text || null, ...(calls.length ? { tool_calls: calls } : {}) });
       } else
         for (const c of m.content) {
@@ -338,12 +339,12 @@ RULES
           else if (c.type === "text") msgs.push({ role: "user", content: c.text });
         }
     }
-    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    const res = await fetch(api.url, {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model, messages: msgs, tools: TOOLS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.input_schema } })) }),
     });
-    if (!res.ok) throw await apiError(res, "OpenAI");
+    if (!res.ok) throw await apiError(res, api.who);
     const j = await res.json();
     const msg = j.choices?.[0]?.message || {};
     const content = [];
@@ -353,14 +354,14 @@ RULES
       try {
         input = JSON.parse(tc.function.arguments || "{}");
       } catch {}
-      content.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
+      content.push({ type: "tool_use", id: tc.id || "call_" + Math.random().toString(36).slice(2), name: tc.function.name, input, ...(tc.extra_content ? { extra: tc.extra_content } : {}) });
     }
     const u = j.usage || {};
-    return { content, stop: msg.tool_calls?.length ? "tool_use" : "end_turn", cost: ((u.prompt_tokens || 0) * PRICE[model][0] + (u.completion_tokens || 0) * PRICE[model][1]) / 1e6 };
+    return { content, stop: msg.tool_calls?.length ? "tool_use" : "end_turn", cost: ((u.prompt_tokens || 0) * (PRICE[model] || [2, 12])[0] + (u.completion_tokens || 0) * (PRICE[model] || [2, 12])[1]) / 1e6 };
   }
   async function apiError(res, who) {
     const body = (await res.text().catch(() => "")).slice(0, 300);
-    if (res.status === 401 || res.status === 403) return new Error(`${who} rejected your API key. Check it on the Connect AI page.`);
+    if (res.status === 401 || res.status === 403 || /api key not valid|API_KEY_INVALID/i.test(body)) return new Error(`${who} rejected your API key. Check it on the Connect AI page.`);
     if (res.status === 429) return new Error(`${who} is busy right now. Try again in a minute.`);
     if (res.status === 402 || /credit|quota|billing/i.test(body)) return new Error(`Your ${who} account is out of credits.`);
     return new Error(`${who} had a problem (${res.status}). Try again. ${body}`);
@@ -375,8 +376,13 @@ RULES
       "claude-account": C.sample && !C.declined ? { kind: "sample" } : null,
       anthropic: !C.inClaude && k.ANTHROPIC_API_KEY ? { kind: "loop", call: (s, m) => callAnthropic(k.ANTHROPIC_API_KEY, s, m) } : null,
       openai: !C.inClaude && k.OPENAI_API_KEY ? { kind: "loop", call: (s, m) => callOpenAI(k.OPENAI_API_KEY, s, m) } : null,
+      // Gemini through its OpenAI-style endpoint; Pro (newest your key has) because editing code needs the smarter model
+      gemini: !C.inClaude && k.GEMINI_API_KEY ? { kind: "loop", call: (s, m) => callOpenAI(k.GEMINI_API_KEY, s, m, {
+        url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", who: "Gemini",
+        model: (LS.get("cf-gemini-models", {}) || {}).pro || "gemini-pro-latest",
+      }) } : null,
     };
-    return opts[pref] || opts["claude-account"] || opts.anthropic || opts.openai || null;
+    return opts[pref] || opts["claude-account"] || opts.anthropic || opts.openai || opts.gemini || null;
   }
   /** Model options for a Claude-account call, from the chosen model name. */
   function sampleModelOpts(model) {
@@ -621,7 +627,7 @@ ${head}
             role: "system",
             text: window.__cfClaude.inClaude
               ? "I can't reach your Claude account from this page right now. Reload it and press Allow when Claude asks."
-              : "To change the app I need an AI: add an Anthropic or OpenAI key on the Connect AI page (or open the app inside Claude to use your Claude account), then ask again.",
+              : "To change the app I need an AI: add an Anthropic, OpenAI or Gemini key on the Connect AI page (or open the app inside Claude to use your Claude account), then ask again.",
             action: window.__cfClaude.inClaude ? null : "connect",
           });
         else await addChat({ role: "system", text: e.message || String(e) });

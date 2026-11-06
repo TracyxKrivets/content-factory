@@ -447,6 +447,7 @@ const ROLES = [
       { id: "claude-account", label: "Your Claude account", note: "Uses your Claude plan, no key. Only when the app is open inside Claude.", claude: true },
       { id: "anthropic", label: "Claude API (Anthropic)", note: "Pay per use with an API key.", key: "ANTHROPIC_API_KEY" },
       { id: "openai", label: "OpenAI API", note: "Pay per use with an API key.", key: "OPENAI_API_KEY" },
+      { id: "gemini", label: "Google Gemini", note: "Pay per use, cheap and fast. Picks Google's newest model for you.", key: "GEMINI_API_KEY" },
       { id: "offline-writer", label: "Practice templates", note: "Free. Basic fill-in-the-blank scripts." },
     ],
   },
@@ -455,6 +456,7 @@ const ROLES = [
     options: [
       { id: "elevenlabs", label: "ElevenLabs", note: "The most natural voices.", key: "ELEVENLABS_API_KEY" },
       { id: "openai-tts", label: "OpenAI voice", note: "Good and cheap.", key: "OPENAI_API_KEY" },
+      { id: "gemini-tts", label: "Gemini voice", note: "Natural voices in 70+ languages, very cheap.", key: "GEMINI_API_KEY" },
       { id: "no-voice", label: "No voice (text + music)", note: "Free. Big captions over music." },
     ],
   },
@@ -463,6 +465,7 @@ const ROLES = [
     options: [
       { id: "sora", label: "Sora AI video", note: "Realistic moving AI clips (OpenAI). The priciest option, only used when picked.", key: "OPENAI_API_KEY", optIn: true },
       { id: "openai-image", label: "OpenAI images", note: "AI pictures, about $0.10 each.", key: "OPENAI_API_KEY" },
+      { id: "gemini-image", label: "Gemini images (Nano Banana)", note: "AI pictures, about $0.04 each. Needs billing on in Google AI Studio.", key: "GEMINI_API_KEY" },
       { id: "pexels", label: "Pexels photos", note: "Free stock photos.", key: "PEXELS_API_KEY" },
       { id: "offline-cards", label: "Color backgrounds", note: "Free." },
     ],
@@ -480,6 +483,7 @@ const ROLES = [
       { id: "claude-account", label: "Your Claude account", note: "Uses your Claude plan, no key. Only inside Claude.", claude: true },
       { id: "anthropic", label: "Claude API (Anthropic)", note: "Pay per use with an API key.", key: "ANTHROPIC_API_KEY" },
       { id: "openai", label: "OpenAI API", note: "Pay per use with an API key.", key: "OPENAI_API_KEY" },
+      { id: "gemini", label: "Google Gemini", note: "Pay per use with an API key.", key: "GEMINI_API_KEY" },
     ],
   },
 ];
@@ -527,10 +531,10 @@ function ConnectPage() {
   const C = CLAUDE();
   return html`<div style="max-width:820px;margin:0 auto">
     <h1 style="margin-top:16px">🔌 Connect AI</h1>
-    <p class="dim" style="margin-top:0">Pick what does each job. Anything not set up falls back to the free option, so the app always works.
+    <p class="dim" style="margin-top:0">Paste your keys in the box below and they sort themselves. Then pick what does each job; anything not set up falls back to the free option, so the app always works.
       ${C.inClaude ? " You're inside Claude, so the Writer and the chat can run on your Claude account with no key." : " Keys stay in this browser and go straight to each service."}</p>
-    <${KeyDrop} />
-    ${C.inClaude && html`<div class="banner warn" style="margin-bottom:14px"><span class="small">Inside Claude, the page can't reach outside services (ElevenLabs, OpenAI, Pexels), so voice and AI pictures are off here. For those, use the downloaded-file version of the app.</span></div>`}
+    <${KeyDrop} results=${results} onTest=${test} onAdded=${(name, r) => setResults((x) => ({ ...x, [name]: r }))} />
+    ${C.inClaude && html`<div class="banner warn" style="margin-bottom:14px"><span class="small">Inside Claude, the page can't reach outside services (ElevenLabs, OpenAI, Gemini, Pexels), so voice and AI pictures are off here. For those, use the downloaded-file version of the app.</span></div>`}
     <div style="display:grid;gap:16px">${ROLES.map((role) => {
       const states = role.options.map((o) => ({ o, st: optionState(o) }));
       const auto = states.find((x) => x.st.ok && !x.o.optIn)?.o.id;
@@ -543,11 +547,26 @@ function ConnectPage() {
         ${role.models && selected && (selected.o.id === "claude-account" || selected.o.id === "anthropic") && html`<div style="margin-top:12px"><label class="lbl small">Claude model</label>
           <div class="chips">${CLAUDE_MODELS.map(([m, label, hint]) => html`<button class=${"chip" + ((models[role.id] || "claude-sonnet-5-5") === m ? " on" : "")} title=${hint} onClick=${() => setModel(role.id, m)}>${label} <span class="small" style="opacity:.7">${hint}</span></button>`)}</div></div>`}
         ${selected?.o.id === "sora" && html`<${SoraOptions} />`}
+        ${role.id === "writer" && selected?.o.id === "gemini" && html`<${GeminiOptions} />`}
         ${usingFallback && html`<p class="small" style="margin:10px 0 0;color:#ffe0a0">Your pick isn't ready yet, so “${selected?.o.label}” is used for now.</p>`}
       </div>`;
     })}</div>
     <button class="btn primary" style="width:100%;margin-top:18px" onClick=${() => go("make")}>DONE: MAKE VIDEOS</button>
   </div>`;
+}
+
+/** Gemini writer: Flash (fast, cheap) or Pro (smarter). The exact model is the newest your key can use. */
+function GeminiOptions() {
+  const [o, setO] = useState(geminiSettings);
+  const m = loadSetting("cf-gemini-models", null) || GEMINI_DEFAULTS;
+  const set = (patch) => {
+    const next = { ...o, ...patch };
+    setO(next);
+    saveSetting("cf-gemini", next);
+  };
+  return html`<div style="margin-top:12px"><label class="lbl small">Gemini model for scripts</label><div class="chips">
+    <button class=${"chip" + (o.writer !== "pro" ? " on" : "")} onClick=${() => set({ writer: "flash" })}>Flash <span class="small" style="opacity:.7">fast, cheap · ${m.flash}</span></button>
+    <button class=${"chip" + (o.writer === "pro" ? " on" : "")} onClick=${() => set({ writer: "pro" })}>Pro <span class="small" style="opacity:.7">smarter, slower · ${m.pro}</span></button></div></div>`;
 }
 
 /** Sora settings: model, which scenes get video, and what it roughly costs. */
@@ -569,37 +588,18 @@ function SoraOptions() {
   </div>`;
 }
 
-function RoleOption({ o, st, on, onPick, result, onTest }) {
-  const [val, setVal] = useState("");
+function RoleOption({ o, st, on, onPick, result }) {
   const has = o.key && keys.get(o.key);
-  const save = () => {
-    if (!val.trim()) return toast("Paste the key first", true);
-    keys.set(o.key, val);
-    setVal("");
-    toast("Key saved ✓");
-    onPick();
-    setTimeout(onTest, 50);
-  };
+  const label = o.key && KEY_DEFS.find((d) => d.name === o.key)?.label;
   return html`<div class=${"roleopt" + (on ? " on" : "") + (st.ok ? "" : " off")}>
     <button class="roleopt-main" onClick=${onPick}>
       <span class="radio">${on ? "●" : "○"}</span>
       <span style="flex:1;text-align:left"><b>${o.label}</b><span class="small dim"> · ${o.note}</span>
-        ${!st.ok && !st.needsKey && html`<div class="small" style="color:#ffe0a0">${st.why}</div>`}</span>
+        ${!st.ok && !st.needsKey && html`<div class="small" style="color:#ffe0a0">${st.why}</div>`}
+        ${o.key && canFetch() && (has
+          ? html`<div class="small" style=${"color:" + (result && !result.ok && result.message !== "Checking…" ? "var(--red)" : "var(--green)")}>${result && !result.ok && result.message !== "Checking…" ? "⚠ " + result.message : "✓ " + label + " key added"}</div>`
+          : html`<div class="small dim">Needs ${/^[AEIOU]/.test(label) ? "an" : "a"} ${label} key: paste it in the box at the top. <a href=${KEY_LINKS[o.key]} target="_blank" rel="noreferrer" style="text-decoration:underline" onClick=${(e) => e.stopPropagation()}>Get one ↗</a></div>`)}</span>
     </button>
-    ${o.key && canFetch() && html`<div class="row" style="gap:8px;margin:8px 0 0 34px">
-      ${has
-        ? html`<code class="small dim">${mask(has)}</code>
-            ${result && html`<span class="small" style=${"color:" + (result.ok ? "var(--green)" : "var(--red)")}>${result.message}</span>`}
-            <span class="spacer"></span>
-            <button class="btn small" onClick=${onTest}>Test</button>
-            <button class="btn small danger" onClick=${async () => {
-              if (await confirmBox({ title: "Remove this key?", body: "Anything using it falls back to the next option.", yes: "Remove", danger: true })) keys.set(o.key, "");
-            }}>✕</button>`
-        : html`<input class="input" style="flex:1;min-width:200px;font-family:monospace;padding:10px 12px" placeholder="Paste key" value=${val}
-              onInput=${(e) => setVal(e.target.value)} onKeyDown=${(e) => e.key === "Enter" && save()} autocomplete="off" spellcheck="false" />
-            <button class="btn small primary" onClick=${save}>Save key</button>
-            <a class="small" href=${KEY_LINKS[o.key]} target="_blank" rel="noreferrer" style="text-decoration:underline">Get a key ↗</a>`}
-    </div>`}
   </div>`;
 }
 
@@ -613,13 +613,15 @@ async function testKey(name, value) {
         body: JSON.stringify({ model: MODELS.anthropic.cheap, max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
       }),
     OPENAI_API_KEY: () => fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${value}` } }),
+    GEMINI_API_KEY: () => fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", { headers: { "x-goog-api-key": value } }),
     ELEVENLABS_API_KEY: () => fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": value } }),
     PEXELS_API_KEY: () => fetch("https://api.pexels.com/v1/search?query=night&per_page=1", { headers: { Authorization: value } }),
   };
   try {
     const res = await calls[name]();
     if (res.ok) return { ok: true, message: "Connected ✓" };
-    if (res.status === 401 || res.status === 403) return { ok: false, message: "That key was rejected. Copy it again and paste the whole thing." };
+    if (res.status === 401 || res.status === 403 || (res.status === 400 && /api key not valid|API_KEY_INVALID/i.test(await res.clone().text().catch(() => ""))))
+      return { ok: false, message: "That key was rejected. Copy it again and paste the whole thing." };
     if (res.status === 429) return { ok: true, message: "Key works (service is busy right now)." };
     return { ok: false, message: `The service answered with an error (${res.status}). Try again in a minute.` };
   } catch {
@@ -632,7 +634,8 @@ const jobsFor = (name) => ROLES.filter((r) => r.options.some((o) => o.key === na
 const keyLabel = (name) => KEY_DEFS.find((d) => d.name === name)?.label || name;
 
 /** Paste any key(s): the app works out which service each one is for and files it there. */
-function KeyDrop() {
+function KeyDrop({ results = {}, onTest = () => {}, onAdded = () => {} }) {
+  useData(async () => keys.all());
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [out, setOut] = useState([]);
@@ -640,6 +643,8 @@ function KeyDrop() {
   const file = (value, name, note = "") => {
     const had = keys.get(name);
     keys.set(name, value);
+    onAdded(name, { ok: true, message: "Connected ✓" });
+    if (name === "GEMINI_API_KEY") discoverGemini(value).catch(() => {});
     return { ok: true, value, name, text: `${keyLabel(name)} key saved${had && had !== value ? " (replaced the old one)" : ""}${note}. Used for: ${jobsFor(name).join(", ")}.` };
   };
   const run = async (raw) => {
@@ -685,13 +690,22 @@ function KeyDrop() {
   return html`<div class="card" style="margin:14px 0 18px">
     <label class="lbl" style="margin:0 0 6px">🔑 Paste any API key</label>
     <p class="small dim" style="margin:0 0 8px">Paste one key or several (even a whole .env file or a note). The app works out which service each key is for, checks it, and puts it in the right place. You don't need to pick anything.</p>
-    <textarea rows="2" placeholder="sk-ant-…  sk-proj-…  sk_…  (paste here)" value=${text} disabled=${busy} style="width:100%;font-family:ui-monospace,monospace"
+    <textarea rows="2" placeholder="sk-ant-…  sk-proj-…  AIza…  sk_…  (paste here)" value=${text} disabled=${busy} style="width:100%;font-family:ui-monospace,monospace"
       onInput=${(e) => setText(e.target.value)}
       onPaste=${(e) => { const t = e.clipboardData?.getData("text"); if (t) { e.preventDefault(); run(t); } }}></textarea>
     <div class="row" style="gap:8px;margin-top:8px">
       <button class="btn primary" disabled=${busy || !text.trim()} onClick=${() => run(text)}>${busy ? "Checking…" : "Add key"}</button>
       ${busy && html`<span class="small dim">Checking with each service…</span>`}
     </div>
+    ${KEY_DEFS.some((d) => keys.get(d.name)) && html`<div style="margin-top:14px"><div class="small dim" style="margin-bottom:6px">Your keys (sorted automatically)</div>
+      <div style="display:grid;gap:6px">${KEY_DEFS.filter((d) => keys.get(d.name)).map((d) => html`<div class="row" style="gap:8px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.04)">
+        <b class="small" style="min-width:120px">${d.label}</b><code class="small dim">${mask(keys.get(d.name))}</code>
+        ${results[d.name] && html`<span class="small" style=${"color:" + (results[d.name].ok ? "var(--green)" : "var(--red)")}>${results[d.name].message}</span>`}
+        <span class="spacer"></span>
+        ${live && html`<button class="btn small" onClick=${() => onTest(d.name)}>Test</button>`}
+        <button class="btn small danger" title="Remove" onClick=${async () => {
+          if (await confirmBox({ title: `Remove your ${d.label} key?`, body: "Anything using it falls back to the next option.", yes: "Remove", danger: true })) keys.set(d.name, "");
+        }}>✕</button></div>`)}</div></div>`}
     ${out.length > 0 && html`<div style="display:grid;gap:6px;margin-top:10px">${out.map((r, i) => html`<div class="small" style=${"padding:8px 10px;border-radius:10px;background:" + (r.ok ? "rgba(80,220,140,.12)" : "rgba(255,200,90,.12)")}>
       ${r.ok ? "✓ " : "⚠️ "}${r.text}
       ${r.ask && html`<div class="chips" style="margin-top:6px">${KEY_DEFS.map((d) => html`<button class="chip" onClick=${() => choose(i, d.name)}>${d.label}</button>`)}</div>`}

@@ -195,6 +195,7 @@ const blobs = {
 const KEY_DEFS = [
   { name: "ANTHROPIC_API_KEY", label: "Anthropic (Claude)", unlocks: "AI scripts", url: "https://console.anthropic.com/settings/keys" },
   { name: "OPENAI_API_KEY", label: "OpenAI", unlocks: "AI scripts, voice, images, exact captions", url: "https://platform.openai.com/api-keys" },
+  { name: "GEMINI_API_KEY", label: "Google Gemini", unlocks: "AI scripts, voice, images", url: "https://aistudio.google.com/apikey" },
   { name: "ELEVENLABS_API_KEY", label: "ElevenLabs", unlocks: "Best AI voice", url: "https://elevenlabs.io/app/settings/api-keys" },
   { name: "PEXELS_API_KEY", label: "Pexels", unlocks: "Free stock photos", url: "https://www.pexels.com/api/new/" },
 ];
@@ -218,6 +219,7 @@ const keys = {
 function detectKey(value) {
   const v = value.trim();
   if (/^sk-ant-/.test(v)) return "ANTHROPIC_API_KEY";
+  if (/^AIza[0-9A-Za-z_-]{35}$/.test(v) || /^AQ\.[0-9A-Za-z_-]{20,}$/.test(v)) return "GEMINI_API_KEY";
   if (/^sk-(proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}$/.test(v)) return "OPENAI_API_KEY";
   if (/^sk_[A-Za-z0-9]{40,}$/.test(v) || /^[a-f0-9]{32}$/i.test(v)) return "ELEVENLABS_API_KEY";
   if (/^[A-Za-z0-9]{56}$/.test(v)) return "PEXELS_API_KEY";
@@ -225,14 +227,13 @@ function detectKey(value) {
 }
 // keys from services this app doesn't use (yet), so we can say what they are instead of "unknown"
 const OTHER_KEYS = [
-  [/^AIza[0-9A-Za-z_-]{35}$/, "a Google (Gemini) key"],
   [/^xai-[A-Za-z0-9]{20,}$/, "an xAI (Grok) key"],
   [/^gsk_[A-Za-z0-9]{20,}$/, "a Groq key"],
   [/^r8_[A-Za-z0-9]{20,}$/, "a Replicate key"],
   [/^hf_[A-Za-z0-9]{20,}$/, "a Hugging Face key"],
   [/^(ghp|gho|github_pat)_[A-Za-z0-9_]{20,}$/, "a GitHub token (not an AI key: don't paste it here)"],
 ];
-const ENV_NAMES = { ANTHROPIC: "ANTHROPIC_API_KEY", CLAUDE: "ANTHROPIC_API_KEY", OPENAI: "OPENAI_API_KEY", SORA: "OPENAI_API_KEY", ELEVENLABS: "ELEVENLABS_API_KEY", ELEVEN: "ELEVENLABS_API_KEY", XI: "ELEVENLABS_API_KEY", PEXELS: "PEXELS_API_KEY" };
+const ENV_NAMES = { ANTHROPIC: "ANTHROPIC_API_KEY", CLAUDE: "ANTHROPIC_API_KEY", GEMINI: "GEMINI_API_KEY", GOOGLE: "GEMINI_API_KEY", GOOGLEAI: "GEMINI_API_KEY", OPENAI: "OPENAI_API_KEY", SORA: "OPENAI_API_KEY", ELEVENLABS: "ELEVENLABS_API_KEY", ELEVEN: "ELEVENLABS_API_KEY", XI: "ELEVENLABS_API_KEY", PEXELS: "PEXELS_API_KEY" };
 /**
  * Pull every key out of pasted text: one key, several, or a whole .env file / note.
  * Returns [{ value, name (or null), named: true if the text said which service, other: what it is if unsupported }].
@@ -277,7 +278,7 @@ async function httpError(res, provider) {
   const body = (await res.text().catch(() => "")).slice(0, 600);
   const b = body.toLowerCase();
   const msg = `${provider} HTTP ${res.status}: ${body}`;
-  if (res.status === 401 || res.status === 403) return new ProviderError("auth", msg, { provider });
+  if (res.status === 401 || res.status === 403 || /api key not valid|api_key_invalid|invalid api key/.test(b)) return new ProviderError("auth", msg, { provider });
   if (res.status === 402 || /quota|insufficient|credit|billing|exceeded your/.test(b)) return new ProviderError("quota", msg, { provider });
   if (res.status === 429) return new ProviderError("rate_limit", msg, { provider });
   if (/safety|content_policy|moderation|policy_violation|not allowed|blocked/.test(b)) return new ProviderError("content_blocked", msg, { provider });

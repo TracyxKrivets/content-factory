@@ -241,6 +241,112 @@ const openaiImage = {
     return { blob: new Blob([bin], { type: "image/png" }), cost: PRICE.openaiImage };
   },
 };
+// ---- Google Gemini: writer, images (Nano Banana), voice. Model names change often, so we ask
+// Google which models this key can use and pick the newest, falling back to Google's "latest" aliases.
+const GEMINI = "https://generativelanguage.googleapis.com/v1beta";
+const GEMINI_DEFAULTS = { flash: "gemini-flash-latest", pro: "gemini-pro-latest", image: "gemini-3.1-flash-image", tts: "gemini-3.8-flash-tts" };
+const gemVer = (id) => parseFloat((id.match(/gemini-(\d+(?:\.\d+)?)/) || [])[1] || 0) * 10 + (/preview|exp/.test(id) ? 0 : 1);
+function pickGeminiModels(list) {
+  const ids = (list || []).filter((m) => !m.supportedGenerationMethods || m.supportedGenerationMethods.includes("generateContent")).map((m) => String(m.name || "").replace(/^models\//, ""));
+  const best = (re) => ids.filter((i) => re.test(i)).sort((a, b) => gemVer(b) - gemVer(a))[0];
+  return {
+    flash: best(/^gemini-\d+(\.\d+)?-flash(-preview)?$/) || GEMINI_DEFAULTS.flash,
+    pro: best(/^gemini-\d+(\.\d+)?-pro(-preview)?$/) || GEMINI_DEFAULTS.pro,
+    image: best(/^gemini-\d+(\.\d+)?-flash-image(-preview)?$/) || best(/^gemini-.*-image(-preview)?$/) || GEMINI_DEFAULTS.image,
+    tts: best(/^gemini-\d+(\.\d+)?-flash-tts(-preview)?$/) || best(/^gemini-\d+(\.\d+)?-flash-preview-tts$/) || best(/tts/) || GEMINI_DEFAULTS.tts,
+  };
+}
+async function discoverGemini(key = keys.get("GEMINI_API_KEY")) {
+  const res = await fetch(`${GEMINI}/models?pageSize=1000`, { headers: { "x-goog-api-key": key }, signal: timeout(20000) });
+  if (!res.ok) throw await httpError(res, "gemini");
+  const m = pickGeminiModels((await res.json()).models);
+  saveSetting("cf-gemini-models", { ...m, key: key.slice(-6) });
+  return m;
+}
+async function geminiModels() {
+  const saved = loadSetting("cf-gemini-models", null);
+  if (saved && saved.key === keys.get("GEMINI_API_KEY").slice(-6)) return saved;
+  try {
+    return await discoverGemini();
+  } catch {
+    return GEMINI_DEFAULTS;
+  }
+}
+const geminiSettings = () => ({ writer: "flash", voice: "Charon", ...loadSetting("cf-gemini", {}) });
+async function geminiCall(model, body, ms = 120000) {
+  const res = await fetch(`${GEMINI}/models/${model}:generateContent`, {
+    method: "POST", signal: timeout(ms),
+    headers: { "x-goog-api-key": keys.get("GEMINI_API_KEY"), "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw await httpError(res, "gemini");
+  const j = await res.json();
+  const parts = j.candidates?.[0]?.content?.parts || [];
+  const why = j.promptFeedback?.blockReason || j.candidates?.[0]?.finishReason;
+  return { j, parts, why };
+}
+const geminiLlm = {
+  id: "gemini", label: "Google Gemini", cap: "llm",
+  available: () => canFetch() && !!keys.get("GEMINI_API_KEY"),
+  async complete(r) {
+    const m = await geminiModels();
+    const model = r.tier === "quality" && geminiSettings().writer === "pro" ? m.pro : m.flash;
+    const images = r.images?.length ? (await Promise.all(r.images.map(blobToBase64))).map((data) => ({ inlineData: { mimeType: "image/jpeg", data } })) : [];
+    const { j, parts, why } = await geminiCall(model, {
+      systemInstruction: { parts: [{ text: r.system + "\nReply with JSON only." }] },
+      contents: [{ role: "user", parts: [...images, { text: r.prompt }] }],
+      // newer models think before answering, which uses output tokens: leave room for both
+      generationConfig: { maxOutputTokens: (r.maxTokens || 1000) + 6000, responseMimeType: "application/json" },
+    });
+    const text = parts.filter((x) => x.text && !x.thought).map((x) => x.text).join("");
+    if (!text) throw new ProviderError(/SAFETY|BLOCK|PROHIBITED/.test(why || "") ? "content_blocked" : "bad_output", `Empty reply from Gemini (${why || "no text"})`, { provider: "gemini", retryable: !/SAFETY|BLOCK/.test(why || "") });
+    const u = j.usageMetadata || {};
+    const [pi, po] = /pro/.test(model) ? [2, 12] : [1.5, 9];
+    return { text, model, cost: ((u.promptTokenCount || 0) * pi + ((u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0)) * po) / 1e6 };
+  },
+};
+const geminiImage = {
+  id: "gemini-image", label: "Gemini images (Nano Banana)", cap: "image",
+  available: () => canFetch() && !!keys.get("GEMINI_API_KEY"),
+  async generate({ prompt }) {
+    const { image } = await geminiModels();
+    const { parts, why } = await geminiCall(image, {
+      contents: [{ role: "user", parts: [{ text: `${prompt}. Vertical 9:16 photo for a short-form video. No text, letters, logos or watermarks.` }] }],
+      generationConfig: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio: "9:16" } },
+    });
+    const img = parts.find((x) => x.inlineData?.data);
+    if (!img) throw new ProviderError(/SAFETY|BLOCK|PROHIBITED/.test(why || "") ? "content_blocked" : "bad_output", `Gemini made no image (${why || "empty"})`, { provider: "gemini-image", retryable: true });
+    return { blob: b64Blob(img.inlineData.data, img.inlineData.mimeType || "image/png"), cost: 0.045 };
+  },
+};
+const geminiVoice = {
+  id: "gemini-tts", label: "Gemini voice", cap: "voice",
+  available: () => canFetch() && !!keys.get("GEMINI_API_KEY"),
+  async speak({ text, style, language }) {
+    const { tts } = await geminiModels();
+    const { parts, why } = await geminiCall(tts, {
+      contents: [{ role: "user", parts: [{ text: `Read this aloud in a ${style || "clear, engaging"} tone, in natural native ${language || "English"}, as short-form video narration:\n\n${text}` }] }],
+      generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: geminiSettings().voice } } } },
+    }, 180000);
+    const a = parts.find((x) => x.inlineData?.data);
+    if (!a) throw new ProviderError("bad_output", `Gemini made no audio (${why || "empty"})`, { provider: "gemini-tts", retryable: true });
+    const rate = Number((a.inlineData.mimeType || "").match(/rate=(\d+)/)?.[1] || 24000);
+    const blob = /wav|mp3|mpeg|ogg/.test(a.inlineData.mimeType || "") ? b64Blob(a.inlineData.data, a.inlineData.mimeType) : pcmToWav(b64Bytes(a.inlineData.data), rate);
+    return { blob, cost: (text.length / 14) * 25 * 20 / 1e6 + 0.0005 };
+  },
+};
+const b64Bytes = (b64) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+const b64Blob = (b64, type) => new Blob([b64Bytes(b64)], { type });
+/** Gemini voice sends raw 16-bit mono PCM; wrap it in a WAV header so browsers can play it. */
+function pcmToWav(pcm, rate) {
+  const h = new DataView(new ArrayBuffer(44));
+  const w = (o, s) => [...s].forEach((c, i) => h.setUint8(o + i, c.charCodeAt(0)));
+  w(0, "RIFF"); h.setUint32(4, 36 + pcm.length, true); w(8, "WAVE"); w(12, "fmt ");
+  h.setUint32(16, 16, true); h.setUint16(20, 1, true); h.setUint16(22, 1, true); h.setUint32(24, rate, true);
+  h.setUint32(28, rate * 2, true); h.setUint16(32, 2, true); h.setUint16(34, 16, true); w(36, "data"); h.setUint32(40, pcm.length, true);
+  return new Blob([h.buffer, pcm], { type: "audio/wav" });
+}
+
 // ---- Sora (OpenAI video): realistic moving clips per scene. Opt-in only: it's the priciest option.
 const SORA_MODELS = [
   ["sora-2", "Sora 2", 0.1, "realistic, $0.10 per second"],
@@ -411,9 +517,9 @@ const whisperCaptions = {
 
 // ---------------------------------------------------------------- registry + fallback chain
 const REGISTRY = {
-  llm: [claudeAccountLlm, anthropicLlm, openaiLlm, offlineLlm],
-  voice: [elevenlabsVoice, openaiVoice, noVoice],
-  image: [soraVideo, openaiImage, pexelsImage, offlineImage],
+  llm: [claudeAccountLlm, anthropicLlm, openaiLlm, geminiLlm, offlineLlm],
+  voice: [elevenlabsVoice, openaiVoice, geminiVoice, noVoice],
+  image: [soraVideo, openaiImage, geminiImage, pexelsImage, offlineImage],
   captions: [estimatedCaptions, whisperCaptions],
 };
 const down = new Map(); // circuit breaker: provider -> until
