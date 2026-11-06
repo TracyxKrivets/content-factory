@@ -135,3 +135,9 @@ pre.tech { white-space: pre-wrap; word-break: break-word; background: #0a0f22; p
 .roleopt.off .roleopt-main b { opacity: .75; }
 .roleopt-main { display: flex; align-items: flex-start; gap: 12px; width: 100%; background: none; border: 0; padding: 0; cursor: pointer; color: inherit; font: inherit; text-align: left; }
 .roleopt .radio { font-size: 20px; width: 22px; color: var(--amber); line-height: 1.2; }
+
+/* home options: always visible */
+.opts { display: grid; gap: 18px; margin-top: 22px; }
+.numbox { width: 96px !important; padding: 10px 12px !important; min-height: 48px; }
+details.refs > summary::before { content: ""; }
+details.refs > summary { list-style: none; cursor: pointer; font-weight: 700; color: var(--text); }

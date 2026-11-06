@@ -171,13 +171,13 @@ const elevenlabsVoice = {
 const openaiVoice = {
   id: "openai-tts", label: "OpenAI voice", cap: "voice",
   available: () => canFetch() && !!keys.get("OPENAI_API_KEY"),
-  async speak({ text, style }) {
+  async speak({ text, style, language }) {
     const res = await fetch("https://api.openai.com/v1/audio/speech", {
       method: "POST", signal: timeout(180000),
       headers: { Authorization: `Bearer ${keys.get("OPENAI_API_KEY")}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "gpt-4o-mini-tts", voice: "onyx", input: text, response_format: "mp3",
-        instructions: `Speak in a ${style} tone. Short-form video narration: clear, engaging, well-paced.`,
+        instructions: `Speak in a ${style} tone, in natural native ${language || "English"}. Short-form video narration: clear, engaging, well-paced.`,
       }),
     });
     if (!res.ok) throw await httpError(res, "openai-tts");
@@ -277,20 +277,39 @@ function wrapWords(t, n) {
 }
 
 // ---------------------------------------------------------------- caption timing
+/**
+ * Split narration into caption pieces. Languages without spaces (Chinese, Japanese, Thai)
+ * are cut at punctuation and every few characters; glue=true means "no space after this".
+ */
+function captionTokens(text, language) {
+  const noSpaces = byChars(language) || (text.length > 20 && text.split(/\s+/).length < text.length / 15);
+  if (!noSpaces) return text.split(/\s+/).filter(Boolean).map((t) => ({ text: t, glue: false }));
+  const size = language === "Thai" ? 9 : 6;
+  const out = [];
+  for (const seg of text.split(/(?<=[。！？!?，、,.;；：:…\s])/u)) {
+    const s = [...seg.trim()];
+    // split evenly so no tiny leftover piece ("る。") ends up on its own
+    const pieces = Math.ceil(s.length / size) || 0;
+    const per = pieces ? Math.ceil(s.length / pieces) : 0;
+    for (let i = 0; i < s.length; i += per) out.push({ text: s.slice(i, i + per).join(""), glue: true });
+    if (out.length && /\s$/.test(seg)) out[out.length - 1].glue = false;
+  }
+  return out.filter((t) => t.text);
+}
 const estimatedCaptions = {
   id: "estimated", label: "Estimated timing (free)", cap: "captions", offline: true,
   available: () => true,
-  async timings({ text, duration }) {
-    const words = text.split(/\s+/).filter(Boolean);
-    const weight = (w) => w.length + 2 + (/[.!?]$/.test(w) ? 6 : /[,;:—]$/.test(w) ? 3 : 0);
-    const total = words.reduce((s, w) => s + weight(w), 0) || 1;
+  async timings({ text, duration, language }) {
+    const words = captionTokens(text, language);
+    const weight = (w) => w.length + 2 + (/[.!?。！？]$/.test(w) ? 6 : /[,;:—，、；：]$/.test(w) ? 3 : 0);
+    const total = words.reduce((s, w) => s + weight(w.text), 0) || 1;
     const lead = Math.min(0.2, duration * 0.02);
     const usable = Math.max(0.5, duration - lead - 0.15);
     let t = lead;
     return {
-      words: words.map((w) => {
-        const d = (weight(w) / total) * usable;
-        const o = { word: w, start: t, end: t + d };
+      words: words.map((w, i) => {
+        const d = (weight(w.text) / total) * usable;
+        const o = { word: w.text, glue: w.glue, start: t, end: t + d };
         t += d;
         return o;
       }),

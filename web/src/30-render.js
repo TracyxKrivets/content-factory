@@ -1,5 +1,6 @@
 // ---------------------------------------------------------------- video editor (runs in the browser)
-const FONT = '"Poppins","Inter",system-ui,-apple-system,"Segoe UI",sans-serif';
+// Poppins/Inter for Latin; Noto fonts cover Korean, Japanese, Chinese, Thai, Arabic, Hindi
+const FONT = '"Poppins","Inter","Noto Sans KR","Noto Sans JP","Noto Sans SC","Noto Sans Thai","Noto Sans Arabic","Noto Sans Devanagari",system-ui,-apple-system,"Segoe UI",sans-serif';
 const FPS = 30;
 const SR = 48000;
 
@@ -128,12 +129,19 @@ const CAPTION_STYLES = {
   "red-highlight": { size: 100, fill: "#ffffff", hi: "#e61e1e", stroke: 13, upper: true },
   glitch: { size: 96, fill: "#ffffff", hi: "#00ffff", stroke: 6, upper: true, glitch: true },
 };
+// wide scripts (CJK, Hangul) take about two Latin letters of room per character
+const visualWidth = (s) => [...s].reduce((n, ch) => n + (/[\u1100-\u11ff\u2e80-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(ch) ? 2 : 1), 0);
 function chunkWords(words) {
   const chunks = [];
   let cur = [];
   for (const w of words) {
+    // start a new caption if this piece wouldn't fit next to the others
+    if (cur.length && visualWidth(cur.map((c) => c.word).join(" ") + " " + w.word) > 18) {
+      chunks.push(cur);
+      cur = [];
+    }
     cur.push(w);
-    if (cur.length >= 3 || cur.map((c) => c.word).join(" ").length >= 16 || /[.!?,;:—]$/.test(w.word)) {
+    if (cur.length >= 3 || visualWidth(cur.map((c) => c.word).join(" ")) >= 16 || /[.!?,;:—。！？，、]$/.test(w.word)) {
       chunks.push(cur);
       cur = [];
     }
@@ -146,10 +154,12 @@ function drawCaption(g, chunks, t, style, bigText) {
   const ch = chunks.find((c) => t >= c.start && t < c.end);
   if (!ch) return;
   const words = ch.words.map((w) => (s.upper ? w.word.toUpperCase() : w.word));
+  const glue = ch.words.map((w) => !!w.glue);
+  const rtl = /[\u0590-\u08ff]/.test(words.join(""));
   const active = ch.words.findIndex((w, i) => t >= w.start && t < (ch.words[i + 1]?.start ?? ch.end));
   let size = bigText ? s.size * 1.25 : s.size;
   g.font = `800 ${size}px ${FONT}`;
-  const full = words.join(" ");
+  const full = words.map((w, i) => w + (glue[i] ? "" : " ")).join("").trim();
   const maxW = W - 160;
   while (g.measureText(full).width > maxW && size > 48) {
     size -= 4;
@@ -165,8 +175,12 @@ function drawCaption(g, chunks, t, style, bigText) {
   g.lineJoin = "round";
   const space = g.measureText(" ").width;
   const widths = words.map((w) => g.measureText(w).width);
-  let x = -(widths.reduce((a, b) => a + b, 0) + space * (words.length - 1)) / 2;
-  words.forEach((w, i) => {
+  const gaps = words.map((_, i) => (i < words.length - 1 && !glue[i] ? space : 0));
+  let x = -(widths.reduce((a, b) => a + b, 0) + gaps.reduce((a, b) => a + b, 0)) / 2;
+  // right-to-left scripts (Arabic): lay words out from the right
+  const order = rtl ? words.map((_, i) => words.length - 1 - i) : words.map((_, i) => i);
+  order.forEach((i) => {
+    const w = words[i];
     g.textAlign = "left";
     if (s.glitch) {
       g.fillStyle = "rgba(255,0,60,0.7)";
@@ -183,7 +197,7 @@ function drawCaption(g, chunks, t, style, bigText) {
     g.strokeText(w, x, 0);
     g.fillStyle = i === active ? s.hi : s.fill;
     g.fillText(w, x, 0);
-    x += widths[i] + space;
+    x += widths[i] + (rtl ? (i > 0 && !glue[i - 1] ? space : 0) : gaps[i]);
   });
   g.restore();
 }
@@ -204,7 +218,9 @@ function drawCover(g, img, k, p) {
  * Falls back to real-time MediaRecorder if WebCodecs isn't available.
  */
 async function renderVideo({ images, weights, words, captionStyle, voiceBlob, duration, musicStyle, onProgress }) {
-  await document.fonts.load(`800 100px Poppins`).catch(() => {});
+  // load the font pieces needed for this text (Google Fonts serves only the characters used)
+  const sampleText = (words || []).map((w) => w.word).join("").slice(0, 400) || "Aa";
+  await document.fonts.load(`800 100px ${FONT}`, sampleText).catch(() => {});
   const bitmaps = await Promise.all(images.map((b) => createImageBitmap(b)));
   const voiceBuf = voiceBlob ? await decodeAudio(voiceBlob) : null;
   const speech = voiceBuf ? voiceBuf.duration : duration;

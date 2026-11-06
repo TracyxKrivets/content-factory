@@ -4,7 +4,6 @@ const EXAMPLES = [
   "Make 5 top 5 list videos about budget travel hacks.",
   "Make 3 storytime shorts about a first day at a new job.",
 ];
-const LANGS = ["English", "Korean", "Spanish", "Japanese", "Chinese", "Portuguese", "French", "German"];
 const loadLS = (k, d) => {
   try {
     return JSON.parse(LS.getItem(k) || "null") ?? d;
@@ -17,12 +16,14 @@ function HomePage() {
   const [text, setText] = useState(() => loadLS("cf-draft", ""));
   const [last, setLast] = useState(() => loadLS("cf-last", {}));
   const [type, setType] = useState(() => loadLS("cf-type", ""));
+  const [refs, setRefs] = useState(() => loadLS("cf-refs", {}));
   const [busy, setBusy] = useState(false);
   const recentTypes = loadLS("cf-types", []);
   const recent = useData(async () => (await db.all("projects")).filter((p) => !p.deletedAt).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)).slice(0, 3));
   useEffect(() => LS.setItem("cf-draft", JSON.stringify(text)), [text]);
   useEffect(() => LS.setItem("cf-last", JSON.stringify(last)), [last]);
   useEffect(() => LS.setItem("cf-type", JSON.stringify(type)), [type]);
+  useEffect(() => LS.setItem("cf-refs", JSON.stringify(refs)), [refs]);
   const count = last.count || parseCount(text);
   const practice = practiceMode();
 
@@ -33,8 +34,10 @@ function HomePage() {
       if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().catch?.(() => {});
     } catch {}
     try {
-      const p = await createProject({ request: text, contentType: type, count: last.count, lengthSec: last.lengthSec, language: last.language });
+      const links = String(refs.links || "").split(/\s+/).map((l) => l.trim()).filter((l) => /^https?:\/\//i.test(l)).slice(0, 10);
+      const p = await createProject({ request: text, contentType: type, count: last.count, lengthSec: last.lengthSec, language: last.language, refs: { links, note: (refs.note || "").trim() } });
       LS.removeItem("cf-draft");
+      setRefs({});
       if (type.trim()) LS.setItem("cf-types", JSON.stringify([type.trim(), ...recentTypes.filter((t) => t !== type.trim())].slice(0, 6)));
       go("project-" + p.id);
     } catch (e) {
@@ -56,19 +59,32 @@ function HomePage() {
       ${recentTypes.length > 0 && html`<div class="chips" style="margin-top:8px">${recentTypes.map((t) => html`<button class=${"chip" + (t === type ? " on" : "")} style="font-size:14px;min-height:40px" onClick=${() => setType(t === type ? "" : t)}>${t}</button>`)}</div>`}
     </div>
 
-    <details style="margin-top:16px"><summary>More options</summary>
-      <div class="card" style="display:grid;gap:18px">
-        <div><label class="lbl">How many videos?</label><div class="chips">
-          ${[0, 1, 3, 5, 10, 20].map((n) => html`<button class=${"chip" + ((last.count || 0) === n ? " on" : "")} onClick=${() => setLast({ ...last, count: n || undefined })}>${n === 0 ? `Auto (${parseCount(text)})` : n}</button>`)}
-        </div></div>
-        <div><label class="lbl">How long?</label><div class="chips">
-          ${[0, 30, 45, 60].map((n) => html`<button class=${"chip" + ((last.lengthSec || 0) === n ? " on" : "")} onClick=${() => setLast({ ...last, lengthSec: n || undefined })}>${n === 0 ? "Auto" : `${n} sec`}</button>`)}
-        </div></div>
-        <div><label class="lbl">Language</label>
-          <select class="input" value=${last.language || "English"} onChange=${(e) => setLast({ ...last, language: e.target.value })}>${LANGS.map((l) => html`<option>${l}</option>`)}</select>
-        </div>
+    <div class="opts">
+      <div><label class="lbl">How many videos?</label><div class="chips">
+        ${[0, 1, 3, 5, 10, 20].map((n) => html`<button class=${"chip" + ((last.count || 0) === n ? " on" : "")} onClick=${() => setLast({ ...last, count: n || undefined })}>${n === 0 ? `Auto (${parseCount(text)})` : n}</button>`)}
+        <input class="input numbox" type="number" min="1" max="50" placeholder="Other" value=${[0, 1, 3, 5, 10, 20].includes(last.count || 0) ? "" : last.count}
+          onInput=${(e) => setLast({ ...last, count: clamp(Number(e.target.value) || 0, 0, 50) || undefined })} />
+      </div></div>
+      <div><label class="lbl">How long is each video?</label><div class="chips">
+        ${[0, 15, 30, 45, 60, 90].map((n) => html`<button class=${"chip" + ((last.lengthSec || 0) === n ? " on" : "")} onClick=${() => setLast({ ...last, lengthSec: n || undefined })}>${n === 0 ? "Auto" : n < 60 ? `${n} sec` : `${n / 60 === 1 ? "1 min" : "1.5 min"}`}</button>`)}
+      </div></div>
+      <div><label class="lbl">Language</label>
+        <select class="input" value=${last.language || "English"} onChange=${(e) => setLast({ ...last, language: e.target.value })}>
+          ${LANGUAGES.map(([en, native]) => html`<option value=${en}>${native === en ? en : `${native} (${en})`}</option>`)}</select>
+        ${practice && (last.language || "English") !== "English" && html`<p class="small" style="margin:6px 0 0;color:#ffe0a0">Practice templates only write English. Connect an AI writer to make ${last.language} videos.</p>`}
       </div>
-    </details>
+    </div>
+
+    <div class="card refs" style="margin-top:22px">
+      <label class="lbl" style="margin:0">🎞 Reference videos <span class="small dim">(optional: videos you're trying to make something like)</span></label>
+      <div style="display:grid;gap:10px;margin-top:10px">
+        <textarea class="input" rows="3" placeholder=${"Paste links, one per line\nhttps://www.tiktok.com/@creator/video/…\nhttps://youtube.com/shorts/…"} value=${refs.links || ""}
+          onInput=${(e) => setRefs({ ...refs, links: e.target.value })} />
+        <input class="input" placeholder="What should I copy from them? e.g. the fast cuts, the hook, the creepy tone, the caption style" value=${refs.note || ""}
+          onInput=${(e) => setRefs({ ...refs, note: e.target.value })} />
+        <p class="small dim" style="margin:0">The AI can't watch videos, so it goes by each link's title and caption (when the site shares it) plus your note. The more you say what you like, the closer it gets.</p>
+      </div>
+    </div>
 
     ${practice && html`<div class="banner warn" style="margin-top:18px">
       <span>🧪</span><span class="small" style="flex:1;min-width:200px"><b>Practice mode:</b> template scripts, color backgrounds and no voice (text + music). Connect an AI writer for real scripts.</span>
@@ -169,7 +185,10 @@ function ProjectPage({ id }) {
         ${p.deletedAt && html`<span class="badge" style="color:var(--red)">In trash</span>`}
       </div>
       <h1 style="font-size:26px">${p.title}</h1>
-      <p class="dim small" style="margin:0">“${p.request}”</p>
+      <p class="dim small" style="margin:0">“${p.request}”${p.language && p.language !== "English" ? ` · ${p.language}` : ""}</p>
+      ${(p.refs?.links?.length > 0 || p.refs?.note) && html`<details style="margin-top:6px"><summary class="small" style="padding:4px 0">🎞 Reference videos (${p.refs.links.length})</summary>
+        <div class="small dim" style="display:grid;gap:4px">${p.refs.links.map((u, i) => html`<a href=${u} target="_blank" rel="noreferrer" style="text-decoration:underline;word-break:break-all">${p.refs.info?.[i]?.title || u}</a>`)}
+        ${p.refs.note && html`<div>What to copy: ${p.refs.note}</div>`}</div></details>`}
     </div>
     ${p.deletedAt && html`<div class="banner warn" style="margin-top:14px">This project is in the trash.
       <button class="btn small primary" onClick=${() => update("projects", id, { deletedAt: null })}>Restore it</button></div>`}

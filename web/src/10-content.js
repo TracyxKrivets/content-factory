@@ -133,16 +133,45 @@ function parseCount(request) {
 
 // Keep prompts short and structured. Only send what the step needs.
 
+// ---------------------------------------------------------------- languages
+const LANGUAGES = [
+  ["English", "English"], ["Korean", "한국어"], ["Japanese", "日本語"], ["Chinese", "中文"], ["Spanish", "Español"],
+  ["Portuguese", "Português"], ["French", "Français"], ["German", "Deutsch"], ["Italian", "Italiano"], ["Hindi", "हिन्दी"],
+  ["Indonesian", "Bahasa Indonesia"], ["Vietnamese", "Tiếng Việt"], ["Thai", "ไทย"], ["Filipino", "Filipino"],
+  ["Arabic", "العربية"], ["Russian", "Русский"], ["Turkish", "Türkçe"],
+];
+/** Languages written without spaces are measured (and captioned) by characters. */
+const CHAR_RATE = { Chinese: 4.5, Japanese: 7, Thai: 10 }; // spoken characters per second
+const WORD_RATE = { Korean: 2.0, German: 2.2, Russian: 2.2, Arabic: 2.2, Hindi: 2.4, Spanish: 2.8, Italian: 2.7, French: 2.7, Portuguese: 2.7 };
+const byChars = (lang) => lang in CHAR_RATE;
+const unitName = (lang) => (byChars(lang) ? "characters" : "words");
+function countUnits(text, lang) {
+  if (byChars(lang)) return text.replace(/[\s\p{P}\p{S}]/gu, "").length;
+  return text.split(/\s+/).filter(Boolean).length;
+}
 const WORDS_PER_SEC = 2.5;
-const targetWords = (sec) => Math.round(sec * WORDS_PER_SEC);
-const targetLines = (sec) => Math.max(5, Math.min(14, Math.round(targetWords(sec) / 11)));
+const targetWords = (sec, lang = "English") => Math.round(sec * (CHAR_RATE[lang] || WORD_RATE[lang] || WORDS_PER_SEC));
+const targetLines = (sec) => Math.max(5, Math.min(14, Math.round(sec / 3.5)));
 
-function ideasPrompt(request, format, count) {
+// ---------------------------------------------------------------- reference videos
+/** Short text block telling the AI what the user wants to copy (it can't watch the videos). */
+function refsText(refs) {
+  if (!refs || (!refs.links?.length && !refs.note)) return "";
+  const info = refs.info || [];
+  const lines = (refs.links || []).map((u, i) => {
+    const x = info[i] || {};
+    return `- ${x.title ? `"${x.title.slice(0, 120)}"` : u}${x.author ? ` by ${x.author}` : ""}`;
+  });
+  return `Reference videos to match (you can't watch them; go by the titles and the note):\n${lines.join("\n")}${refs.note ? `\nWhat to copy from them: ${refs.note.slice(0, 300)}` : ""}`;
+}
+
+function ideasPrompt(request, format, count, language = "English", refs) {
   return {
     system: "You plan short-form video series. Reply with JSON only.",
     prompt: `Request: ${request.slice(0, 400)}
 Format: ${format.name}: ${format.description}
-Give ${count} distinct video ideas. Each needs a different angle (place, object, rule, character, time).
+${refsText(refs)}
+Give ${count} distinct video ideas. Each needs a different angle (place, object, rule, character, time). Write the titles and angles in ${language}.
 JSON: {"ideas":[{"title":"max 8 words","angle":"one sentence"}]}`,
     maxTokens: 120 + count * 60,
   };
@@ -150,14 +179,14 @@ JSON: {"ideas":[{"title":"max 8 words","angle":"one sentence"}]}`,
 
 function scriptSystem(format, language) {
   return `You write viral ${format.name} narration scripts for TikTok, Reels and Shorts.
-Rules: line 1 is the hook and must grab in 2 seconds. No intro, no greeting, no "today". Every line adds something new and keeps momentum. End with a payoff: a twist, punchline, takeaway or a line that loops back to the start. Spoken words only, no stage directions or emojis. Write in ${language}.`;
+Rules: line 1 is the hook and must grab in 2 seconds. No intro, no greeting, no "today". Every line adds something new and keeps momentum. End with a payoff: a twist, punchline, takeaway or a line that loops back to the start. Spoken words only, no stage directions or emojis. Write EVERYTHING (title, lines, caption, hashtags) in ${language}, natural and native-sounding, not translated.`;
 }
 
-function scriptSpec(format, lengthSec) {
+function scriptSpec(format, lengthSec, language = "English") {
   return `Hook style: ${format.hookStyle}
 Structure: ${format.structure}
 Narrator: ${format.voiceStyle}
-Length: ${lengthSec}s = about ${targetWords(lengthSec)} words in ${targetLines(lengthSec)} lines (one beat per line, max 22 words each).
+Length: ${lengthSec}s = about ${targetWords(lengthSec, language)} ${unitName(language)} in ${targetLines(lengthSec)} lines (one beat per line, short lines).
 JSON: {"title":"max 8 words","lines":["..."],"caption":"one-sentence social caption","hashtags":["#tag"]}`;
 }
 
@@ -166,7 +195,8 @@ function scriptPrompt(o) {
     system: scriptSystem(o.format, o.language),
     prompt: `Idea: ${o.idea}
 Series: ${o.request.slice(0, 300)}
-${scriptSpec(o.format, o.lengthSec)}`,
+${refsText(o.refs)}
+${scriptSpec(o.format, o.lengthSec, o.language)}`,
     maxTokens: 900,
   };
 }
@@ -178,15 +208,15 @@ function rewritePrompt(o) {
 Draft:
 ${o.script.lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}
 Issues: ${o.issues.join("; ")}
-${scriptSpec(o.format, o.lengthSec)}`,
+${scriptSpec(o.format, o.lengthSec, o.language)}`,
     maxTokens: 900,
   };
 }
 
-function checkPrompt(script, lengthSec) {
+function checkPrompt(script, lengthSec, language = "English") {
   return {
     system: "You are a strict short-form video script editor. Reply with JSON only.",
-    prompt: `Target: ${lengthSec}s spoken.
+    prompt: `Target: ${lengthSec}s spoken in ${language}. Write the issues in English.
 ${script.lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}
 Score 1-10: hook (grabs in 2s), pacing, escalation (keeps momentum), ending (strong payoff). List concrete fixes. pass=true only if every score >= 7.
 JSON: {"hook":0,"pacing":0,"escalation":0,"ending":0,"issues":["..."],"pass":true}`,
@@ -198,7 +228,7 @@ function scenesPrompt(lines, format) {
   return {
     system: "You write image prompts for vertical short-form videos. Reply with JSON only.",
     prompt: `Visual style: ${format.visualStyle}
-For each numbered line write one image prompt (max 30 words: concrete subject, setting, lighting; same style throughout; no text in image; no two alike) and 2-4 stock photo search keywords.
+For each numbered line write one image prompt (max 30 words: concrete subject, setting, lighting; same style throughout; no text in image; no two alike) and 2-4 stock photo search keywords. Write prompts and keywords in English, whatever language the lines are in.
 ${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}
 JSON: {"scenes":[{"visual":"...","search":"..."}]} with exactly ${lines.length} items.`,
     maxTokens: 120 + lines.length * 80,
@@ -392,11 +422,12 @@ function keywords(text, style) {
 // ---------------------------------------------------------------- style from a free-text content type
 const CAPTION_OPTIONS = ["bold-yellow", "clean-white", "red-highlight", "glitch"];
 const MUSIC_OPTIONS = ["chill-pad", "upbeat-pulse", "tense-pulse", "dark-drone", "eerie-tone", "none"];
-function designPrompt(contentType, request) {
+function designPrompt(contentType, request, refs) {
   return {
     system: "You design the style for a series of short-form videos (TikTok, Reels, Shorts). Reply with JSON only.",
     prompt: `Content type: ${contentType || "(not given: work it out from the request)"}
 Request: ${request.slice(0, 300)}
+${refsText(refs)}
 Design a style that fits. captionStyle is one of: ${CAPTION_OPTIONS.join(", ")}. musicStyle is one of: ${MUSIC_OPTIONS.join(", ")}. lengthSec between 20 and 60.
 JSON: {"name":"2-4 words","emoji":"one emoji","description":"one line","hookStyle":"how line 1 grabs","structure":"beat by beat","visualStyle":"what the pictures look like","voiceStyle":"how the narrator sounds","captionStyle":"bold-yellow","musicStyle":"chill-pad","lengthSec":40}`,
     maxTokens: 500,

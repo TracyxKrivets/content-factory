@@ -63,12 +63,13 @@ function normalizeScript(j) {
     caption: String(j.caption || ""), hashtags: (Array.isArray(j.hashtags) ? j.hashtags : []).map(String).slice(0, 8),
   };
 }
-function localScriptIssues(s, lengthSec) {
+function localScriptIssues(s, lengthSec, lang = "English") {
   const issues = [];
-  const words = s.lines.join(" ").split(/\s+/).length;
-  const target = targetWords(lengthSec);
-  if (words < target * 0.7) issues.push(`Too short: ${words} words, need about ${target}.`);
-  if (words > target * 1.35) issues.push(`Too long: ${words} words, need about ${target}.`);
+  const n = countUnits(s.lines.join(" "), lang);
+  const target = targetWords(lengthSec, lang);
+  const unit = unitName(lang);
+  if (n < target * 0.7) issues.push(`Too short: ${n} ${unit}, need about ${target}.`);
+  if (n > target * 1.35) issues.push(`Too long: ${n} ${unit}, need about ${target}.`);
   if (/^(hi|hello|hey|welcome to my|today|in this video|so,)/i.test(s.lines[0])) issues.push("Boring intro: start with the hook.");
   if (s.lines[0].split(/\s+/).length > 24) issues.push("Hook is too long. Make line 1 punchier.");
   return issues;
@@ -78,7 +79,7 @@ const blobKey = (v, name) => `${v.id}:${name}:${Date.now().toString(36)}`;
 const STEP_FNS = {
   async script(ctx) {
     const { project: P, video: V } = ctx;
-    const p = scriptPrompt({ idea: V.idea, request: P.request, format: P.format, lengthSec: P.lengthSec, language: P.language });
+    const p = scriptPrompt({ idea: V.idea, request: P.request, format: P.format, lengthSec: P.lengthSec, language: P.language, refs: P.refs });
     const r = await llm(ctx, "script", "quality", p, { idea: V.idea, angle: V.angle, request: P.request, format: P.format, lengthSec: P.lengthSec });
     return { output: normalizeScript(r.json), provider: r.provider, cost: r.cost };
   },
@@ -86,14 +87,16 @@ const STEP_FNS = {
     const { project: P, video: V } = ctx;
     const s = V.steps.script.output;
     if (V.steps.script.provider === "edited") return { output: { edited: true, issues: [] } };
-    const local = localScriptIssues(s, P.lengthSec);
-    const chk = await llm(ctx, "check", "cheap", checkPrompt(s, P.lengthSec), { script: s });
+    // practice templates only write English: don't measure them against another language
+    const lang = ctx.video.steps.script.provider === "offline-writer" ? "English" : P.language;
+    const local = localScriptIssues(s, P.lengthSec, lang);
+    const chk = await llm(ctx, "check", "cheap", checkPrompt(s, P.lengthSec, P.language), { script: s });
     const sc = chk.json || {};
     const ai = Array.isArray(sc.issues) ? sc.issues.map(String) : [];
     const weak = ["hook", "pacing", "escalation", "ending"].filter((k) => Number(sc[k]) > 0 && Number(sc[k]) < 7);
     if (!local.length && sc.pass !== false && !weak.length) return { output: { scores: sc, issues: [] }, provider: chk.provider, cost: chk.cost };
     const issues = [...local, ...ai].slice(0, 6);
-    const rw = await llm(ctx, "rewrite", "quality", rewritePrompt({ script: s, issues, format: P.format, lengthSec: P.lengthSec, language: P.language }), {
+    const rw = await llm(ctx, "rewrite", "quality", rewritePrompt({ script: s, issues, format: P.format, lengthSec: P.lengthSec, language: P.language, refs: P.refs }), {
       idea: V.idea + " (v2)", angle: V.angle, request: P.request, format: P.format, lengthSec: P.lengthSec,
     });
     await ctx.patchStep("script", { output: normalizeScript(rw.json) });
@@ -116,7 +119,7 @@ const STEP_FNS = {
   },
   async voice(ctx) {
     const text = ctx.video.steps.script.output.lines.join(" ");
-    const { result, provider } = await withProviders("voice", ctx, (p) => p.speak({ text, style: ctx.project.format.voiceStyle }));
+    const { result, provider } = await withProviders("voice", ctx, (p) => p.speak({ text, style: ctx.project.format.voiceStyle, language: ctx.project.language }));
     if (!result.blob) return { output: { none: true, duration: result.duration }, provider: provider.id, cost: 0 };
     const buf = await decodeAudio(result.blob).catch(() => null);
     if (!buf || buf.duration < 1) throw new ProviderError("bad_output", "Voice audio is empty", { provider: provider.id, retryable: true });
@@ -150,7 +153,7 @@ const STEP_FNS = {
     const v = ctx.video.steps.voice.output;
     const text = ctx.video.steps.script.output.lines.join(" ");
     const audio = v.key ? await blobs.get(v.key) : null;
-    const { result, provider } = await withProviders("captions", ctx, (p) => p.timings({ audio, text, duration: v.duration }));
+    const { result, provider } = await withProviders("captions", ctx, (p) => p.timings({ audio, text, duration: v.duration, language: ctx.project.language }));
     return { output: { words: result.words }, provider: provider.id, cost: result.cost };
   },
   async assemble(ctx) {
@@ -286,7 +289,7 @@ async function resumeAll() {
 }
 
 // ---------------------------------------------------------------- projects
-async function createProject({ request, contentType, count, lengthSec, language }) {
+async function createProject({ request, contentType, count, lengthSec, language, refs }) {
   request = request.trim().slice(0, 2000);
   if (!request) throw new Error("Type what you want to make first ✍️");
   contentType = (contentType || "").trim().slice(0, 200);
@@ -294,6 +297,7 @@ async function createProject({ request, contentType, count, lengthSec, language 
   const p = {
     id: uid(), title: request.replace(/^(please\s+)?(make|create|generate)\s+(me\s+)?/i, "").slice(0, 70), request, contentType,
     format: fallbackStyle(contentType, request), styleReady: false, count: n, lengthSec: lengthSec || null, language: language || "English",
+    refs: refs && (refs.links?.length || refs.note) ? { links: refs.links || [], note: refs.note || "", info: null } : null,
     status: "planning", ideas: [], avoid: [], cost: 0, deletedAt: null, createdAt: now(), updatedAt: now(),
   };
   await db.put("projects", p);
@@ -305,15 +309,20 @@ async function createProject({ request, contentType, count, lengthSec, language 
 async function planProject(projectId) {
   let p = await db.get("projects", projectId);
   if (!p) return;
+  // look up reference video titles once (only where the site allows it)
+  if (p.refs?.links?.length && !p.refs.info) {
+    const info = await Promise.all(p.refs.links.map(refInfo));
+    p = await update("projects", projectId, (x) => ({ refs: { ...x.refs, info } }));
+  }
   if (!p.styleReady) {
     let style = p.format;
     const prov = chain("llm", p.avoid || []).find((x) => !x.offline);
     if (prov) {
       try {
-        const key = "style:" + (await hash(p.contentType, p.contentType ? "" : p.request));
+        const key = "style:" + (await hash(p.contentType, p.contentType ? "" : p.request, refsText(p.refs)));
         let j = await kv.get(key);
         if (!j) {
-          const r = await prov.complete({ task: "style", tier: "cheap", ...designPrompt(p.contentType, p.request), input: {} });
+          const r = await prov.complete({ task: "style", tier: "cheap", ...designPrompt(p.contentType, p.request, p.refs), input: {} });
           j = parseJson(r.text);
           await kv.set(key, j);
           await addCost(projectId, r.cost);
@@ -334,7 +343,7 @@ async function planIdeas(projectId) {
   const p = await db.get("projects", projectId);
   if (!p || (await db.byIndex("videos", "projectId", projectId)).length) return;
   let ideas = [];
-  const pr = ideasPrompt(p.request, p.format, p.count);
+  const pr = ideasPrompt(p.request, p.format, p.count, p.language, p.refs);
   let lastErr;
   for (const prov of chain("llm", p.avoid || [])) {
     try {
@@ -479,4 +488,23 @@ async function emptyTrash() {
 function videoBlobKeys(v) {
   const s = v.steps;
   return [s.voice.output?.key, ...(s.visuals.output?.partial || []).map((x) => x.key), s.assemble.output?.key].filter(Boolean);
+}
+
+/** Title + creator of a reference link via the site's public oEmbed (YouTube, TikTok). Best effort. */
+async function refInfo(url) {
+  if (!canFetch()) return {};
+  const api = /youtu\.?be/i.test(url)
+    ? `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(url)}`
+    : /tiktok\.com/i.test(url)
+      ? `https://www.tiktok.com/oembed?url=${encodeURIComponent(url)}`
+      : null;
+  if (!api) return {};
+  try {
+    const r = await fetch(api, { signal: timeout(6000) });
+    if (!r.ok) return {};
+    const j = await r.json();
+    return { title: String(j.title || "").slice(0, 200), author: String(j.author_name || "").slice(0, 80) };
+  } catch {
+    return {};
+  }
 }
