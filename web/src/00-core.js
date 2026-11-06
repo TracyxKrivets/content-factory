@@ -257,7 +257,7 @@ function toProviderError(e, provider) {
 const WHO = {
   script: "The writer", script_check: "The script checker", scenes: "The scene planner", ideas: "The idea maker",
   voice: "The voice generator", visuals: "The image generator", music: "The music maker", captions: "The caption maker",
-  assemble: "The video editor", final_check: "The final check", system: "The app",
+  assemble: "The video editor", final_check: "The final check", system: "The app", research: "The video researcher",
 };
 const OPTIONAL = ["script_check", "music", "captions", "final_check"];
 function friendly(e, step) {

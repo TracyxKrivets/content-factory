@@ -297,7 +297,7 @@ async function createProject({ request, contentType, count, lengthSec, language,
   const p = {
     id: uid(), title: request.replace(/^(please\s+)?(make|create|generate)\s+(me\s+)?/i, "").slice(0, 70), request, contentType,
     format: fallbackStyle(contentType, request), styleReady: false, count: n, lengthSec: lengthSec || null, language: language || "English",
-    refs: refs && (refs.links?.length || refs.note) ? { links: refs.links || [], note: refs.note || "", info: null } : null,
+    refs: refs && (refs.links?.length || refs.note || refs.files?.length) ? { links: refs.links || [], note: refs.note || "", files: refs.files || [], info: null } : null,
     status: "planning", ideas: [], avoid: [], cost: 0, deletedAt: null, createdAt: now(), updatedAt: now(),
   };
   await db.put("projects", p);

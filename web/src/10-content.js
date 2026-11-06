@@ -156,13 +156,15 @@ const targetLines = (sec) => Math.max(5, Math.min(14, Math.round(sec / 3.5)));
 // ---------------------------------------------------------------- reference videos
 /** Short text block telling the AI what the user wants to copy (it can't watch the videos). */
 function refsText(refs) {
-  if (!refs || (!refs.links?.length && !refs.note)) return "";
+  const research = refs?.files?.length ? researchText(refs.files) : "";
+  if (!refs || (!refs.links?.length && !refs.note)) return research;
   const info = refs.info || [];
   const lines = (refs.links || []).map((u, i) => {
     const x = info[i] || {};
     return `- ${x.title ? `"${x.title.slice(0, 120)}"` : u}${x.author ? ` by ${x.author}` : ""}`;
   });
-  return `Reference videos to match (you can't watch them; go by the titles and the note):\n${lines.join("\n")}${refs.note ? `\nWhat to copy from them: ${refs.note.slice(0, 300)}` : ""}`;
+  const linked = lines.length ? `Reference videos to match (you can't watch these links; go by the titles):\n${lines.join("\n")}\n` : "";
+  return `${linked}${refs.note ? `What the user wants to copy: ${refs.note.slice(0, 300)}\n` : ""}${research}`.trim();
 }
 
 function ideasPrompt(request, format, count, language = "English", refs) {

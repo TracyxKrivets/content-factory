@@ -141,3 +141,11 @@ pre.tech { white-space: pre-wrap; word-break: break-word; background: #0a0f22; p
 .numbox { width: 96px !important; padding: 10px 12px !important; min-height: 48px; }
 details.refs > summary::before { content: ""; }
 details.refs > summary { list-style: none; cursor: pointer; font-weight: 700; color: var(--text); }
+
+/* reference video uploads */
+.dropzone { border: 2px dashed var(--line); border-radius: 14px; padding: 18px; text-align: center; cursor: pointer; background: #0d1430; }
+.dropzone:hover, .dropzone.on { border-color: var(--amber); background: #1a1a10; }
+.refcard { border: 2px solid var(--line); border-radius: 14px; padding: 10px; background: var(--bg2); }
+.refthumb { width: 64px; flex: none; aspect-ratio: 9/16; border-radius: 8px; overflow: hidden; background: #05070f; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.refthumb img { width: 100%; height: 100%; object-fit: cover; }
+.refnotes { display: grid; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }

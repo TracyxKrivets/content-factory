@@ -35,9 +35,13 @@ function HomePage() {
     } catch {}
     try {
       const links = String(refs.links || "").split(/\s+/).map((l) => l.trim()).filter((l) => /^https?:\/\//i.test(l)).slice(0, 10);
-      const p = await createProject({ request: text, contentType: type, count: last.count, lengthSec: last.lengthSec, language: last.language, refs: { links, note: (refs.note || "").trim() } });
+      const studied = (await refFiles()).filter((f) => f.status === "done").map(({ id, name, meta, notes, transcript, by }) => ({ id, name, meta, notes, transcript: transcript?.slice(0, 1500), by, status: "done" }));
+      if ((await refFiles()).some((f) => f.status === "working" || f.status === "waiting") && !(await confirmBox({ title: "Still studying your videos", body: "Some reference videos aren't done yet. Start anyway without them, or wait a moment?", yes: "Start anyway" }))) {
+        setBusy(false);
+        return;
+      }
+      const p = await createProject({ request: text, contentType: type, count: last.count, lengthSec: last.lengthSec, language: last.language, refs: { links, note: (refs.note || "").trim(), files: studied } });
       LS.removeItem("cf-draft");
-      setRefs({});
       if (type.trim()) LS.setItem("cf-types", JSON.stringify([type.trim(), ...recentTypes.filter((t) => t !== type.trim())].slice(0, 6)));
       go("project-" + p.id);
     } catch (e) {
@@ -82,7 +86,8 @@ function HomePage() {
           onInput=${(e) => setRefs({ ...refs, links: e.target.value })} />
         <input class="input" placeholder="What should I copy from them? e.g. the fast cuts, the hook, the creepy tone, the caption style" value=${refs.note || ""}
           onInput=${(e) => setRefs({ ...refs, note: e.target.value })} />
-        <p class="small dim" style="margin:0">The AI can't watch videos, so it goes by each link's title and caption (when the site shares it) plus your note. The more you say what you like, the closer it gets.</p>
+        <${RefUploads} />
+        <p class="small dim" style="margin:0">Links: the AI can't open them, so it goes by each link's title (when the site shares it) and your note. For real research, save the video and upload the file: the AI looks at its frames and studies the pacing.</p>
       </div>
     </div>
 
@@ -186,9 +191,10 @@ function ProjectPage({ id }) {
       </div>
       <h1 style="font-size:26px">${p.title}</h1>
       <p class="dim small" style="margin:0">“${p.request}”${p.language && p.language !== "English" ? ` · ${p.language}` : ""}</p>
-      ${(p.refs?.links?.length > 0 || p.refs?.note) && html`<details style="margin-top:6px"><summary class="small" style="padding:4px 0">🎞 Reference videos (${p.refs.links.length})</summary>
+      ${(p.refs?.links?.length > 0 || p.refs?.note || p.refs?.files?.length > 0) && html`<details style="margin-top:6px"><summary class="small" style="padding:4px 0">🎞 Reference videos (${p.refs.links.length + (p.refs.files?.length || 0)})</summary>
         <div class="small dim" style="display:grid;gap:4px">${p.refs.links.map((u, i) => html`<a href=${u} target="_blank" rel="noreferrer" style="text-decoration:underline;word-break:break-all">${p.refs.info?.[i]?.title || u}</a>`)}
-        ${p.refs.note && html`<div>What to copy: ${p.refs.note}</div>`}</div></details>`}
+        ${p.refs.note && html`<div>What to copy: ${p.refs.note}</div>`}
+        ${(p.refs.files || []).map((f) => html`<div>🎬 ${f.name}: ${f.notes?.summary || ""}</div>`)}</div></details>`}
     </div>
     ${p.deletedAt && html`<div class="banner warn" style="margin-top:14px">This project is in the trash.
       <button class="btn small primary" onClick=${() => update("projects", id, { deletedAt: null })}>Restore it</button></div>`}
@@ -594,6 +600,70 @@ function SystemPage() {
         }}>Protect my projects</button>`}</div>`)}
       <div class="card"><b>💸 Spend (estimate)</b><div class="small dim">${money(info.cost)} total</div></div>
       <div class="card"><b>🔌 AI</b><div class="small dim">${practiceMode() ? "Practice mode: connect an AI writer for real scripts." : "Connected."}</div><a href="#connect" class="btn small" style="margin-top:8px">Choose AI for each job</a></div>
+    </div>`}
+  </div>`;
+}
+
+// ---------------------------------------------------------------- reference video uploads (Make page)
+function RefUploads() {
+  const files = useData(refFiles) || [];
+  const [drag, setDrag] = useState(false);
+  const input = useRef();
+  const add = async (list) => {
+    const n = await addRefFiles(list);
+    if (n) toast(`Studying ${n} video${n > 1 ? "s" : ""}… 🔍`);
+  };
+  const ai = !practiceMode();
+  return html`<div>
+    <div class=${"dropzone" + (drag ? " on" : "")}
+      onClick=${() => input.current?.click()}
+      onDragOver=${(e) => (e.preventDefault(), setDrag(true))} onDragLeave=${() => setDrag(false)}
+      onDrop=${(e) => (e.preventDefault(), setDrag(false), add([...e.dataTransfer.files]))}>
+      <div style="font-size:26px">⬆</div>
+      <b>Upload reference videos</b>
+      <div class="small dim">Drop video files here or tap to choose (MP4 works best${files.length ? `, ${MAX_REF_FILES - files.length} more allowed` : `, up to ${MAX_REF_FILES}`})</div>
+      <input ref=${input} type="file" accept="video/*,.mp4,.mov,.webm,.m4v" multiple style="display:none" onChange=${(e) => {
+        const picked = [...e.target.files]; // copy first: clearing the box empties its live file list
+        e.target.value = "";
+        add(picked);
+      }} />
+    </div>
+    ${!ai && html`<p class="small" style="margin:8px 0 0;color:#ffe0a0">No AI writer connected, so I can only measure the videos (length, cuts, pace). Connect one to have it study them properly.</p>`}
+    ${files.length > 0 && html`<div style="display:grid;gap:10px;margin-top:12px">${files.map((f) => html`<${RefCard} key=${f.id} f=${f} />`)}</div>`}
+    ${files.some((f) => f.status === "done") && html`<button class="btn small" style="margin-top:10px" onClick=${() => downloadBlob(new Blob([notesAsText(files)], { type: "text/plain" }), "reference-research.txt")}>⬇ Download research notes</button>`}
+  </div>`;
+}
+function RefCard({ f }) {
+  const [open, setOpen] = useState(false);
+  const [play, setPlay] = useState(false);
+  const thumb = useBlobUrl(f.status === "done" ? "refthumb:" + f.id : null);
+  const vid = useBlobUrl(play ? "ref:" + f.id : null);
+  const n = f.notes || {};
+  const row = (k, v) => v && html`<div><b>${k}:</b> ${Array.isArray(v) ? html`<ul style="margin:4px 0 0;padding-left:18px">${v.map((x) => html`<li>${x}</li>`)}</ul>` : v}</div>`;
+  return html`<div class="refcard">
+    <div class="row" style="gap:12px;align-items:flex-start;flex-wrap:nowrap">
+      <div class="refthumb" onClick=${() => f.status === "done" && setPlay(!play)} title="Play">
+        ${play && vid ? html`<video src=${vid} controls autoplay playsinline style="width:100%;height:100%;object-fit:cover"></video>` : thumb ? html`<img src=${thumb} />` : html`<span>🎬</span>`}
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${f.name}</div>
+        <div class="small dim">${(f.size / 1e6).toFixed(1)} MB${f.meta ? ` · ${Math.round(f.meta.duration)} s · new shot every ~${f.meta.avgShot} s` : ""}</div>
+        ${f.status === "waiting" && html`<div class="small" style="color:var(--amber)">In line…</div>`}
+        ${f.status === "working" && html`<div class="small" style="color:var(--amber)"><span class="spin">◐</span> ${f.step || "Studying"}…</div>`}
+        ${f.status === "error" && html`<div class="small" style="color:var(--red)">⚠️ ${f.error} <button class="btn small" style="min-height:32px;padding:4px 10px" onClick=${() => researchRef(f.id)}>Try again</button></div>`}
+        ${f.status === "done" && html`<div class="small" style="margin-top:2px">${n.summary || ""}</div>
+          ${n.aiError && html`<div class="small" style="color:#ffe0a0">${n.aiError}</div>`}
+          <button class="btn small" style="min-height:32px;padding:4px 10px;margin-top:6px" onClick=${() => setOpen(!open)}>${open ? "Hide notes" : "See what the AI learned"}</button>`}
+      </div>
+      <button class="btn small danger" style="min-height:36px;padding:4px 10px" title="Remove" onClick=${async () => {
+        if (await confirmBox({ title: "Remove this reference video?", yes: "Remove", danger: true })) removeRefFile(f.id);
+      }}>✕</button>
+    </div>
+    ${open && html`<div class="small refnotes">
+      ${row("Hook", n.hook)}${row("Structure", n.structure)}${row("Pacing", n.pacing)}${row("Visuals", n.visuals)}${row("Captions", n.captions)}${row("Voice", n.voice)}${row("Music", n.music)}${row("What to copy", n.copy)}
+      ${f.transcript && html`<details><summary class="small">Transcript</summary><div class="dim">${f.transcript}</div></details>`}
+      <div class="dim" style="margin-top:6px">Studied by: ${f.by}</div>
+      <button class="btn small" style="margin-top:8px" onClick=${() => researchRef(f.id)}>↻ Study again</button>
     </div>`}
   </div>`;
 }

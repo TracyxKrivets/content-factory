@@ -64,6 +64,12 @@ TOKEN_PRICES["claude-opus-5-5"] = [5, 25];
 const CLAUDE = () => window.__cfClaude || { inClaude: false };
 const canFetch = () => !CLAUDE().inClaude;
 const timeout = (ms) => (AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
+async function blobToBase64(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
 
 // ---------------------------------------------------------------- AI writers
 /** Writer on the viewer's own Claude account (only when the app runs inside claude.ai). */
@@ -74,7 +80,13 @@ const claudeAccountLlm = {
     const model = r.tier === "quality" ? modelChoice("writer") : "claude-haiku-5-5";
     const tier = model === "claude-opus-5-5" ? "complex" : model === "claude-haiku-5-5" ? "quick" : "default";
     try {
-      const { text } = await CLAUDE().sample(`${r.system}\n\n${r.prompt}\n\nReply with only the JSON, no other text.`, { model, modelTier: tier, cache: false });
+      const opts = { model, modelTier: tier, cache: false };
+      if (r.images?.length) {
+        const lim = await CLAUDE().sample.limits().catch(() => null);
+        if (!lim?.images) throw new ProviderError("missing_key", "This Claude view can't look at pictures", { provider: "claude-account" });
+        opts.images = r.images.slice(0, lim.images.maxCount || 8);
+      }
+      const { text } = await CLAUDE().sample(`${r.system}\n\n${r.prompt}\n\nReply with only the JSON, no other text.`, opts);
       return { text, model, cost: 0 };
     } catch (e) {
       throw sampleProviderError(e);
@@ -105,7 +117,15 @@ const anthropicLlm = {
         "x-api-key": keys.get("ANTHROPIC_API_KEY"), "anthropic-version": "2023-06-01",
         "content-type": "application/json", "anthropic-dangerous-direct-browser-access": "true",
       },
-      body: JSON.stringify({ model, max_tokens: r.maxTokens, system: r.system + "\nReply with JSON only.", messages: [{ role: "user", content: r.prompt }] }),
+      body: JSON.stringify({
+        model, max_tokens: r.maxTokens, system: r.system + "\nReply with JSON only.",
+        messages: [{
+          role: "user",
+          content: r.images?.length
+            ? [...(await Promise.all(r.images.map(blobToBase64))).map((data) => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data } })), { type: "text", text: r.prompt }]
+            : r.prompt,
+        }],
+      }),
     });
     if (!res.ok) throw await httpError(res, "anthropic");
     const j = await res.json();
@@ -125,7 +145,15 @@ const openaiLlm = {
       headers: { Authorization: `Bearer ${keys.get("OPENAI_API_KEY")}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model, max_completion_tokens: r.maxTokens, response_format: { type: "json_object" },
-        messages: [{ role: "system", content: r.system }, { role: "user", content: r.prompt }],
+        messages: [
+          { role: "system", content: r.system },
+          {
+            role: "user",
+            content: r.images?.length
+              ? [{ type: "text", text: r.prompt }, ...(await Promise.all(r.images.map(blobToBase64))).map((d) => ({ type: "image_url", image_url: { url: "data:image/jpeg;base64," + d } }))]
+              : r.prompt,
+          },
+        ],
       }),
     });
     if (!res.ok) throw await httpError(res, "openai");
