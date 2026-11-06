@@ -149,7 +149,7 @@ function chunkWords(words) {
   if (cur.length) chunks.push(cur);
   return chunks.map((c, i) => ({ words: c, start: c[0].start, end: chunks[i + 1]?.[0]?.start ?? c[c.length - 1].end + 0.3 }));
 }
-function drawCaption(g, chunks, t, style, bigText) {
+function drawCaption(g, chunks, t, style, bigText, safe = { right: 80, bottom: 330 }) {
   const s = CAPTION_STYLES[style === "horror-red" ? "red-highlight" : style] || CAPTION_STYLES["bold-yellow"];
   const ch = chunks.find((c) => t >= c.start && t < c.end);
   if (!ch) return;
@@ -160,16 +160,18 @@ function drawCaption(g, chunks, t, style, bigText) {
   let size = bigText ? s.size * 1.25 : s.size;
   g.font = `800 ${size}px ${FONT}`;
   const full = words.map((w, i) => w + (glue[i] ? "" : " ")).join("").trim();
-  const maxW = W - 160;
+  const left = 80, right = Math.max(80, safe.right);
+  const maxW = W - left - right;
   while (g.measureText(full).width > maxW && size > 48) {
     size -= 4;
     g.font = `800 ${size}px ${FONT}`;
   }
   const pop = clamp((t - ch.start) / 0.08, 0, 1);
   const scale = 0.88 + 0.12 * pop;
-  const y = bigText ? H * 0.5 : H * 0.68;
+  // stay above the platform's bottom bar and left of its like/comment buttons
+  const y = bigText ? H * 0.5 : Math.min(H * 0.68, H - safe.bottom - size * 0.8);
   g.save();
-  g.translate(W / 2, y);
+  g.translate(left + maxW / 2, y);
   g.scale(scale, scale);
   g.textBaseline = "middle";
   g.lineJoin = "round";
@@ -203,25 +205,74 @@ function drawCaption(g, chunks, t, style, bigText) {
 }
 
 // ---- frames
-function drawCover(g, img, k, p) {
-  // slow Ken Burns: zoom 1.0→1.1, pan direction alternates per scene
-  const base = Math.max(W / img.width, H / img.height);
-  const z = base * (1.04 + 0.08 * (k % 2 ? 1 - p : p));
-  const w = img.width * z, h = img.height * z;
+function drawCover(g, img, k, p, still = true) {
+  // slow Ken Burns on stills (zoom 1.0→1.1, pan alternates); video clips already move, so just fill the frame
+  const iw = img.videoWidth || img.width, ih = img.videoHeight || img.height;
+  const base = Math.max(W / iw, H / ih);
+  const z = base * (still ? 1.04 + 0.08 * (k % 2 ? 1 - p : p) : 1.0);
+  const w = iw * z, h = ih * z;
   const dx = (W - w) * (k % 2 ? p : 1 - p);
   const dy = (H - h) * (k % 3 === 0 ? p : 0.5);
-  g.drawImage(img, dx, dy, w, h);
+  g.drawImage(img, still ? dx : (W - w) / 2, still ? dy : (H - h) / 2, w, h);
 }
+
+/** Small "AI生成 / AI-generated" mark, top-left, on every frame (China's explicit-label rule). */
+function drawAiLabel(g, text) {
+  if (!text) return;
+  g.save();
+  g.font = `700 34px ${FONT}`;
+  const w = g.measureText(text).width + 36;
+  g.fillStyle = "rgba(0,0,0,0.45)";
+  g.beginPath();
+  g.roundRect ? g.roundRect(40, 200, w, 56, 28) : g.rect(40, 200, w, 56);
+  g.fill();
+  g.fillStyle = "rgba(255,255,255,0.92)";
+  g.textBaseline = "middle";
+  g.textAlign = "left";
+  g.fillText(text, 58, 229);
+  g.restore();
+}
+
+// ---- video clips (Sora): load into a <video>, then seek frame by frame while encoding
+async function loadClip(blob) {
+  const v = document.createElement("video");
+  v.muted = true;
+  v.playsInline = true;
+  v.preload = "auto";
+  v.src = URL.createObjectURL(blob);
+  await new Promise((res, rej) => {
+    v.onloadeddata = res;
+    v.onerror = () => rej(new Error("This browser can't play one of the AI video clips"));
+    setTimeout(() => rej(new Error("An AI video clip took too long to load")), 30000);
+  });
+  return v;
+}
+function seekClip(v, t) {
+  const target = clamp(t, 0, Math.max(0, (v.duration || 0) - 0.04));
+  if (Math.abs(v.currentTime - target) < 0.005) return Promise.resolve();
+  return new Promise((res) => {
+    const done = () => {
+      v.removeEventListener("seeked", done);
+      res();
+    };
+    v.addEventListener("seeked", done);
+    v.currentTime = target;
+    setTimeout(done, 1500);
+  });
+}
+/** Where we are inside a clip: slow it down if the scene runs longer than the clip (no looping jumps). */
+const clipTime = (v, local, dur) => local * Math.min(1, (v.duration || dur) / dur);
 
 /**
  * Render the final MP4. WebCodecs (fast, offline-speed) with H.264 + AAC/Opus.
  * Falls back to real-time MediaRecorder if WebCodecs isn't available.
  */
-async function renderVideo({ images, weights, words, captionStyle, voiceBlob, duration, musicStyle, onProgress }) {
+async function renderVideo({ images, weights, words, captionStyle, voiceBlob, duration, musicStyle, onProgress, safe, aiLabel }) {
   // load the font pieces needed for this text (Google Fonts serves only the characters used)
   const sampleText = (words || []).map((w) => w.word).join("").slice(0, 400) || "Aa";
   await document.fonts.load(`800 100px ${FONT}`, sampleText).catch(() => {});
-  const bitmaps = await Promise.all(images.map((b) => createImageBitmap(b)));
+  const bitmaps = await Promise.all(images.map((b) => (/^video\//.test(b.type) ? loadClip(b) : createImageBitmap(b))));
+  const isClip = bitmaps.map((b) => typeof HTMLVideoElement !== "undefined" && b instanceof HTMLVideoElement);
   const voiceBuf = voiceBlob ? await decodeAudio(voiceBlob) : null;
   const speech = voiceBuf ? voiceBuf.duration : duration;
   const total = speech + 0.8;
@@ -235,17 +286,30 @@ async function renderVideo({ images, weights, words, captionStyle, voiceBlob, du
 
   const canvas = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(W, H) : Object.assign(document.createElement("canvas"), { width: W, height: H });
   const g = canvas.getContext("2d");
-  const frame = (t) => {
+  // live=true (real-time recorder): play clips instead of seeking every frame
+  const frame = async (t, live) => {
     let k = starts.findIndex((s, i) => t >= s && t < s + durs[i]);
     if (k < 0) k = bitmaps.length - 1;
+    if (isClip[k]) {
+      const v = bitmaps[k], ct = clipTime(v, t - starts[k], durs[k]);
+      if (live) {
+        bitmaps.forEach((b, i) => i !== k && isClip[i] && !b.paused && b.pause());
+        if (v.paused) {
+          v.currentTime = ct;
+          v.playbackRate = Math.min(1, (v.duration || durs[k]) / durs[k]);
+          v.play().catch(() => {});
+        }
+      } else await seekClip(v, ct);
+    }
     g.fillStyle = "#000";
     g.fillRect(0, 0, W, H);
-    drawCover(g, bitmaps[k], k, clamp((t - starts[k]) / durs[k], 0, 1));
+    drawCover(g, bitmaps[k], k, clamp((t - starts[k]) / durs[k], 0, 1), !isClip[k]);
     if (bigText) {
       g.fillStyle = "rgba(0,0,0,0.25)";
       g.fillRect(0, 0, W, H);
     }
-    drawCaption(g, chunks, t, captionStyle, bigText);
+    drawCaption(g, chunks, t, captionStyle, bigText, safe);
+    drawAiLabel(g, aiLabel);
     const fade = t < 0.3 ? 1 - t / 0.3 : t > total - 0.5 ? (t - (total - 0.5)) / 0.5 : 0;
     if (fade > 0) {
       g.fillStyle = `rgba(0,0,0,${clamp(fade, 0, 1)})`;
@@ -253,14 +317,23 @@ async function renderVideo({ images, weights, words, captionStyle, voiceBlob, du
     }
   };
 
-  if (typeof VideoEncoder !== "undefined" && typeof AudioEncoder !== "undefined") {
-    try {
-      return await encodeWebCodecs({ canvas, frame, total, audio, onProgress });
-    } catch (e) {
-      console.warn("WebCodecs failed, using real-time recorder", e);
+  try {
+    if (typeof VideoEncoder !== "undefined" && typeof AudioEncoder !== "undefined") {
+      try {
+        return await encodeWebCodecs({ canvas, frame, total, audio, onProgress });
+      } catch (e) {
+        console.warn("WebCodecs failed, using real-time recorder", e);
+      }
     }
+    return await encodeRealtime({ source: canvas, frame, total, audio, onProgress });
+  } finally {
+    bitmaps.forEach((b, i) => {
+      if (isClip[i]) {
+        b.pause();
+        URL.revokeObjectURL(b.src);
+      } else b.close?.();
+    });
   }
-  return encodeRealtime({ source: canvas, frame, total, audio, onProgress });
 }
 
 async function pickCodecs() {
@@ -286,7 +359,7 @@ async function encodeWebCodecs({ canvas, frame, total, audio, onProgress }) {
   const n = Math.ceil(total * FPS);
   for (let i = 0; i < n; i++) {
     if (failure) throw failure;
-    frame(i / FPS);
+    await frame(i / FPS);
     const vf = new VideoFrame(canvas, { timestamp: Math.round((i * 1e6) / FPS), duration: Math.round(1e6 / FPS) });
     ve.encode(vf, { keyFrame: i % 60 === 0 });
     vf.close();
@@ -336,7 +409,7 @@ async function encodeRealtime({ source, frame, total, audio, onProgress }) {
     const tick = () => {
       const t = ac.currentTime - t0;
       if (t >= total) return resolve();
-      frame(t);
+      frame(t, true);
       g2.drawImage(source, 0, 0); // copy the rendered frame onto the recorded canvas
       onProgress?.(t / total);
       requestAnimationFrame(tick);

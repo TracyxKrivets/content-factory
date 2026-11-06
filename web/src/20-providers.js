@@ -216,8 +216,10 @@ const openaiVoice = {
 const noVoice = {
   id: "no-voice", label: "No voice (text + music)", cap: "voice", offline: true,
   available: () => true,
-  async speak({ text }) {
-    return { blob: null, duration: Math.max(6, text.split(/\s+/).length / 2.6 + 1), cost: 0 };
+  async speak({ text, language = "English" }) {
+    // reading pace per language (Chinese/Japanese/Thai count characters, not spaces)
+    const rate = CHAR_RATE[language] || WORD_RATE[language] || 2.6;
+    return { blob: null, duration: Math.max(6, countUnits(text, language) / rate + 1), cost: 0 };
   },
 };
 
@@ -237,6 +239,48 @@ const openaiImage = {
     if (!b64) throw new ProviderError("bad_output", "No image returned", { provider: "openai-image" });
     const bin = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
     return { blob: new Blob([bin], { type: "image/png" }), cost: PRICE.openaiImage };
+  },
+};
+// ---- Sora (OpenAI video): realistic moving clips per scene. Opt-in only: it's the priciest option.
+const SORA_MODELS = [
+  ["sora-2", "Sora 2", 0.1, "realistic, $0.10 per second"],
+  ["sora-2-pro", "Sora 2 Pro", 0.3, "most realistic, $0.30 per second"],
+];
+const SORA_SECONDS = [4, 8, 12];
+const soraSettings = () => ({ model: "sora-2", mode: "all", ...loadSetting("cf-sora", {}) });
+const soraPrice = (model) => (SORA_MODELS.find((m) => m[0] === model) || SORA_MODELS[0])[2];
+/** Shortest clip length Sora offers that covers the scene. */
+const soraClipSec = (sec) => SORA_SECONDS.find((x) => x >= sec - 0.3) || SORA_SECONDS[SORA_SECONDS.length - 1];
+const soraVideo = {
+  id: "sora", label: "Sora AI video", cap: "image", optIn: true,
+  available: () => canFetch() && !!keys.get("OPENAI_API_KEY"),
+  async generate({ prompt, seconds }) {
+    const { model } = soraSettings();
+    const secs = soraClipSec(seconds || 4);
+    const auth = { Authorization: `Bearer ${keys.get("OPENAI_API_KEY")}` };
+    const form = new FormData();
+    form.append("model", model);
+    form.append("prompt", `${prompt}. Vertical 9:16, photorealistic, natural motion, smooth camera movement. No text, captions, logos or watermarks. No real or famous people.`);
+    form.append("seconds", String(secs));
+    form.append("size", "720x1280");
+    let res = await fetch("https://api.openai.com/v1/videos", { method: "POST", headers: auth, body: form, signal: timeout(60000) });
+    if (!res.ok) throw await httpError(res, "sora");
+    let job = await res.json();
+    const t0 = Date.now();
+    while (job.status !== "completed") {
+      if (job.status === "failed" || job.error)
+        throw new ProviderError("bad_output", `Sora couldn't make this scene: ${job.error?.message || "it was refused or failed"}`, { provider: "sora", retryable: false });
+      if (Date.now() - t0 > 15 * 60000) throw new ProviderError("timeout", "Sora took more than 15 minutes on one scene", { provider: "sora", retryable: false });
+      await sleep(job.status === "queued" ? 8000 : 5000);
+      res = await fetch(`https://api.openai.com/v1/videos/${job.id}`, { headers: auth, signal: timeout(30000) });
+      if (!res.ok) throw await httpError(res, "sora");
+      job = await res.json();
+    }
+    const file = await fetch(`https://api.openai.com/v1/videos/${job.id}/content`, { headers: auth, signal: timeout(180000) });
+    if (!file.ok) throw await httpError(file, "sora");
+    const blob = await file.blob();
+    if (blob.size < 1000) throw new ProviderError("bad_output", "Sora sent back an empty clip", { provider: "sora", retryable: true });
+    return { blob: blob.type.startsWith("video/") ? blob : new Blob([blob], { type: "video/mp4" }), video: true, cost: secs * soraPrice(model), sourceId: job.id };
   },
 };
 const pexelsImage = {
@@ -369,7 +413,7 @@ const whisperCaptions = {
 const REGISTRY = {
   llm: [claudeAccountLlm, anthropicLlm, openaiLlm, offlineLlm],
   voice: [elevenlabsVoice, openaiVoice, noVoice],
-  image: [openaiImage, pexelsImage, offlineImage],
+  image: [soraVideo, openaiImage, pexelsImage, offlineImage],
   captions: [estimatedCaptions, whisperCaptions],
 };
 const down = new Map(); // circuit breaker: provider -> until
@@ -381,7 +425,8 @@ function chain(cap, avoid = []) {
   const pick = roleChoice(ROLE_OF[cap]);
   const all = REGISTRY[cap];
   const rank = (p) => (p.id === pick ? -1 : all.indexOf(p)) + (isDown(p.id) ? 1000 : 0);
-  const usable = all.filter((p) => p.available() && !avoid.includes(p.id)).sort((a, b) => rank(a) - rank(b));
+  // opt-in providers (Sora: expensive) only run when picked, never as a surprise backup
+  const usable = all.filter((p) => p.available() && !avoid.includes(p.id) && (!p.optIn || p.id === pick)).sort((a, b) => rank(a) - rank(b));
   if (cap === "captions") return usable;
   // picking a free/offline option on purpose (e.g. "No voice") is respected
   if (pick && usable[0]?.id === pick && usable[0].offline) return [usable[0]];

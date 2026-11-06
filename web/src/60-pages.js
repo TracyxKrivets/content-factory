@@ -40,7 +40,7 @@ function HomePage() {
         setBusy(false);
         return;
       }
-      const p = await createProject({ request: text, contentType: type, count: last.count, lengthSec: last.lengthSec, language: last.language, refs: { links, note: (refs.note || "").trim(), files: studied } });
+      const p = await createProject({ request: text, contentType: type, count: last.count, lengthSec: last.lengthSec, language: last.language, refs: { links, note: (refs.note || "").trim(), files: studied }, platforms: last.platforms || [], aiLabel: last.aiLabel });
       LS.removeItem("cf-draft");
       if (type.trim()) LS.setItem("cf-types", JSON.stringify([type.trim(), ...recentTypes.filter((t) => t !== type.trim())].slice(0, 6)));
       go("project-" + p.id);
@@ -79,6 +79,8 @@ function HomePage() {
       </div>
     </div>
 
+    <${PlatformPicker} last=${last} setLast=${setLast} />
+
     <div class="card refs" style="margin-top:22px">
       <label class="lbl" style="margin:0">🎞 Reference videos <span class="small dim">(optional: videos you're trying to make something like)</span></label>
       <div style="display:grid;gap:10px;margin-top:10px">
@@ -98,7 +100,7 @@ function HomePage() {
 
     <div class="gen-bar">
       <button class="btn primary huge" onClick=${generate} disabled=${busy}>${busy ? html`<span class="spin">◐</span>` : "GENERATE VIDEOS"}</button>
-      <p class="dim small" style="text-align:center;margin-top:10px">${count} video${count > 1 ? "s" : ""}${type.trim() ? ` · ${type.trim().slice(0, 40)}` : ""}${last.lengthSec ? ` · ${last.lengthSec} sec each` : ""}${last.language && last.language !== "English" ? ` · ${last.language}` : ""}</p>
+      <p class="dim small" style="text-align:center;margin-top:10px">${count} video${count > 1 ? "s" : ""}${type.trim() ? ` · ${type.trim().slice(0, 40)}` : ""}${last.lengthSec ? ` · ${last.lengthSec} sec each` : ""}${last.language && last.language !== "English" ? ` · ${last.language}` : ""}${last.platforms?.length ? ` · for ${pickPlatforms(last.platforms).map((p) => p.name.split(" ")[0]).join(", ")}` : ""}</p>
     </div>
 
     ${recent?.length > 0 && html`<div style="margin-top:40px">
@@ -107,6 +109,34 @@ function HomePage() {
         <span style="font-size:24px">${p.format.emoji}</span>
         <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.title}</span>
         <span class="small dim">${STATUS[p.status]?.[0]} · ${ago(p.createdAt)}</span></a>`)}</div>
+    </div>`}
+  </div>`;
+}
+
+/** Pick where the videos will be posted. Each platform's rules shape the script, length and captions. */
+function PlatformPicker({ last, setLast }) {
+  const ids = last.platforms || [];
+  const toggle = (id) => setLast({ ...last, platforms: ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id] });
+  const min = payMinSec(ids);
+  const short = min && last.lengthSec && last.lengthSec < min - 1;
+  const payList = pickPlatforms(ids).filter((p) => p.payMinSec);
+  const payers = payList.map((p) => p.name).join(" and ") + (payList.length === 1 ? " only pays" : " only pay");
+  const china = hasChina(ids);
+  const group = (region, title) => html`<div><div class="small dim" style="margin:8px 0 6px">${title}</div><div class="chips">
+    ${PLATFORMS.filter((p) => p.region === region).map((p) => html`<button class=${"chip" + (ids.includes(p.id) ? " on" : "")} onClick=${() => toggle(p.id)} aria-pressed=${ids.includes(p.id)}>${ids.includes(p.id) ? "✓ " : ""}${p.emoji} ${p.name}</button>`)}</div></div>`;
+  return html`<div class="card" style="margin-top:22px">
+    <label class="lbl" style="margin:0">📲 Where will you post them? <span class="small dim">(pick any: the videos follow each platform's money rules)</span></label>
+    ${group("global", "Global")}
+    ${group("china", "China")}
+    ${ids.length > 0 && html`<div style="display:grid;gap:6px;margin-top:12px">
+      ${min > 0 && practiceMode() && html`<p class="small" style="margin:0;color:#ffe0a0">🧪 Practice templates are too short to pass 1 minute. Connect an AI writer so ${payList.map((p) => p.name).join(" and ")} videos can earn.</p>`}
+      ${min > 0 && !short && html`<p class="small" style="margin:0">⏱ ${payers} for videos over 1 minute, so ${last.lengthSec ? "each script is written to run over a minute" : "Auto length makes them about 70 seconds"}.</p>`}
+      ${short && html`<p class="small" style="margin:0;color:#ffe0a0">⚠️ ${payers} for videos over 1 minute. ${last.lengthSec}-second videos won't earn there.
+        <button class="btn small" style="margin-left:6px" onClick=${() => setLast({ ...last, lengthSec: undefined })}>Use Auto (≈70 sec)</button></p>`}
+      ${china && html`<p class="small" style="margin:0">🏷 Chinese platforms require AI content to be labelled, so an <b>AI生成</b> mark is added to every video.
+        ${(last.language || "English") !== "Chinese" && html`<button class="btn small" style="margin-left:6px" onClick=${() => setLast({ ...last, language: "Chinese" })}>Make them in Chinese</button>`}</p>`}
+      ${!china && html`<label class="small row" style="gap:8px;cursor:pointer"><input type="checkbox" checked=${!!last.aiLabel} onChange=${(e) => setLast({ ...last, aiLabel: e.target.checked })} /> Add a small “AI-generated” mark on the video</label>`}
+      <p class="small dim" style="margin:0">Each finished video gets ready-to-paste post text per platform and a posting checklist. Earning also needs things a video can't change (followers, views, your country), so no app can promise approval. Rules checked ${RULES_CHECKED}.</p>
     </div>`}
   </div>`;
 }
@@ -195,6 +225,13 @@ function ProjectPage({ id }) {
         <div class="small dim" style="display:grid;gap:4px">${p.refs.links.map((u, i) => html`<a href=${u} target="_blank" rel="noreferrer" style="text-decoration:underline;word-break:break-all">${p.refs.info?.[i]?.title || u}</a>`)}
         ${p.refs.note && html`<div>What to copy: ${p.refs.note}</div>`}
         ${(p.refs.files || []).map((f) => html`<div>🎬 ${f.name}: ${f.notes?.summary || ""}</div>`)}</div></details>`}
+      ${p.platforms?.length > 0 && html`<details style="margin-top:6px"><summary class="small" style="padding:4px 0">📲 Posting guide: ${pickPlatforms(p.platforms).map((x) => x.name.split(" ")[0]).join(", ")}</summary>
+        <div style="display:grid;gap:10px;margin-top:6px">${pickPlatforms(p.platforms).map((x) => html`<div class="card" style="padding:12px">
+          <b>${x.emoji} ${x.name}</b> <span class="small dim">· ${x.program}</span>
+          <p class="small" style="margin:6px 0">🏷 ${x.ai}</p>
+          <p class="small dim" style="margin:6px 0">To earn: ${x.needs}</p>
+          <ul class="small dim" style="margin:0;padding-left:18px">${x.rules.map((r) => html`<li>${r}</li>`)}</ul></div>`)}
+          <p class="small dim" style="margin:0">Tap a platform badge under each video for its ready-to-paste post text. Rules checked ${RULES_CHECKED}; platforms change them, so glance at each app's creator centre now and then.</p></div></details>`}
     </div>
     ${p.deletedAt && html`<div class="banner warn" style="margin-top:14px">This project is in the trash.
       <button class="btn small primary" onClick=${() => update("projects", id, { deletedAt: null })}>Restore it</button></div>`}
@@ -250,6 +287,28 @@ const REDO = [
   ["captions", "💬 Redo captions", "Re-time the captions"], ["scenes", "🎞 New scene ideas", "New picture prompts + visuals"],
   ["all", "🧠 Brand new script", "Start this video over"],
 ];
+/** Ready / not-ready per platform, with that platform's post text one tap away. */
+function PlatformBadges({ v }) {
+  const [open, setOpen] = useState(null);
+  const rep = v.steps.final_check.output.platforms;
+  const posts = v.steps.script.output?.posts || {};
+  const p = open && platformById(open);
+  return html`<div class="chips" style="gap:6px">
+    ${Object.entries(rep).map(([id, r]) => html`<button class=${"badge plat" + (r.ok ? " ok" : " warn")} title=${r.notes.join("\n")} onClick=${() => setOpen(id)}>${r.ok ? "✓" : "⚠"} ${platformById(id)?.name.split(" ")[0]}</button>`)}
+    ${p && html`<${Modal} onClose=${() => setOpen(null)}>
+      <h2>${p.emoji} ${p.name}</h2>
+      <div style="display:grid;gap:8px">${rep[open].notes.map((n, i) => html`<p class="small" style=${"margin:0;" + (i < rep[open].notes.length - 1 ? "color:#ffe0a0" : "")}>${i === rep[open].notes.length - 1 ? "🏷 " : "⚠️ "}${n}</p>`)}</div>
+      ${rep[open].ok && html`<p class="small" style="margin:8px 0 0;color:var(--green)">✓ This video meets ${p.name}'s video rules.</p>`}
+      ${posts[open] && html`<label class="lbl small" style="margin-top:14px">Post text</label>
+        <pre class="tech" style="white-space:pre-wrap">${postText(posts[open])}</pre>
+        <button class="btn primary" style="width:100%" onClick=${() => copy(postText(posts[open]), "Post text copied 📋")}>📋 Copy ${p.name.split(" ")[0]} post text</button>`}
+      <details style="margin-top:12px"><summary class="small">${p.program}: what you need</summary>
+        <p class="small">${p.needs}</p><ul class="small">${p.rules.map((r) => html`<li>${r}</li>`)}</ul></details>
+      <button class="btn" style="width:100%;margin-top:10px" onClick=${() => setOpen(null)}>Close</button>
+    <//>`}
+  </div>`;
+}
+
 function VideoCard({ v }) {
   const [more, setMore] = useState(false);
   const [edit, setEdit] = useState(false);
@@ -287,6 +346,7 @@ function VideoCard({ v }) {
       ${practice && html`<div><span class="badge offline" title="The script came from practice templates. Connect an AI writer for real scripts.">🧪 Practice quality</span></div>`}
       ${err && html`<${ErrorBox} err=${err} onAction=${(a) => act(a, errStep)} />`}
       ${finalKey && html`<button class="btn primary" onClick=${async () => downloadBlob(await blobs.get(finalKey), fname)}>⬇ DOWNLOAD</button>`}
+      ${finalKey && v.steps.final_check.output?.platforms && html`<${PlatformBadges} v=${v} />`}
       <div class="row" style="gap:6px;flex-wrap:nowrap">
         ${script && html`<button class="btn small tight" onClick=${() => setEdit(true)}>✏️ Edit</button>`}
         ${finalKey && script && html`<button class="btn small tight" onClick=${() => copy(`${script.caption}\n\n${script.hashtags.join(" ")}`, "Caption copied 📋")}>📋 Copy</button>`}
@@ -396,8 +456,9 @@ const ROLES = [
     ],
   },
   {
-    id: "visuals", icon: "👁", title: "Visuals", what: "Makes the picture for each scene.",
+    id: "visuals", icon: "👁", title: "Visuals", what: "Makes the picture (or AI video clip) for each scene.",
     options: [
+      { id: "sora", label: "Sora AI video", note: "Realistic moving AI clips (OpenAI). The priciest option, only used when picked.", key: "OPENAI_API_KEY", optIn: true },
       { id: "openai-image", label: "OpenAI images", note: "AI pictures, about $0.10 each.", key: "OPENAI_API_KEY" },
       { id: "pexels", label: "Pexels photos", note: "Free stock photos.", key: "PEXELS_API_KEY" },
       { id: "offline-cards", label: "Color backgrounds", note: "Free." },
@@ -468,7 +529,7 @@ function ConnectPage() {
     ${C.inClaude && html`<div class="banner warn" style="margin-bottom:14px"><span class="small">Inside Claude, the page can't reach outside services (ElevenLabs, OpenAI, Pexels), so voice and AI pictures are off here. For those, use the downloaded-file version of the app.</span></div>`}
     <div style="display:grid;gap:16px">${ROLES.map((role) => {
       const states = role.options.map((o) => ({ o, st: optionState(o) }));
-      const auto = states.find((x) => x.st.ok)?.o.id;
+      const auto = states.find((x) => x.st.ok && !x.o.optIn)?.o.id;
       const sel = roles[role.id] && states.find((x) => x.o.id === roles[role.id]) ? roles[role.id] : auto;
       const selected = states.find((x) => x.o.id === sel);
       const usingFallback = roles[role.id] && roles[role.id] !== sel;
@@ -477,10 +538,30 @@ function ConnectPage() {
         <div style="display:grid;gap:8px;margin-top:10px">${states.map(({ o, st }) => html`<${RoleOption} o=${o} st=${st} on=${o.id === sel} onPick=${() => choose(role.id, o.id)} result=${o.key && results[o.key]} onTest=${() => test(o.key)} />`)}</div>
         ${role.models && selected && (selected.o.id === "claude-account" || selected.o.id === "anthropic") && html`<div style="margin-top:12px"><label class="lbl small">Claude model</label>
           <div class="chips">${CLAUDE_MODELS.map(([m, label, hint]) => html`<button class=${"chip" + ((models[role.id] || "claude-sonnet-5-5") === m ? " on" : "")} title=${hint} onClick=${() => setModel(role.id, m)}>${label} <span class="small" style="opacity:.7">${hint}</span></button>`)}</div></div>`}
+        ${selected?.o.id === "sora" && html`<${SoraOptions} />`}
         ${usingFallback && html`<p class="small" style="margin:10px 0 0;color:#ffe0a0">Your pick isn't ready yet, so “${selected?.o.label}” is used for now.</p>`}
       </div>`;
     })}</div>
     <button class="btn primary" style="width:100%;margin-top:18px" onClick=${() => go("make")}>DONE: MAKE VIDEOS</button>
+  </div>`;
+}
+
+/** Sora settings: model, which scenes get video, and what it roughly costs. */
+function SoraOptions() {
+  const [o, setO] = useState(soraSettings);
+  const set = (patch) => {
+    const next = { ...o, ...patch };
+    setO(next);
+    saveSetting("cf-sora", next);
+  };
+  const per = soraPrice(o.model);
+  const est = (sec, scenes) => (o.mode === "hook" ? soraClipSec(sec / scenes) : scenes * soraClipSec(sec / scenes)) * per;
+  return html`<div style="margin-top:12px;display:grid;gap:10px">
+    <div><label class="lbl small">Sora model</label><div class="chips">${SORA_MODELS.map(([m, label, , hint]) => html`<button class=${"chip" + (o.model === m ? " on" : "")} onClick=${() => set({ model: m })}>${label} <span class="small" style="opacity:.7">${hint}</span></button>`)}</div></div>
+    <div><label class="lbl small">Which scenes get AI video?</label><div class="chips">
+      <button class=${"chip" + (o.mode !== "hook" ? " on" : "")} onClick=${() => set({ mode: "all" })}>Every scene</button>
+      <button class=${"chip" + (o.mode === "hook" ? " on" : "")} onClick=${() => set({ mode: "hook" })}>Just the first (the hook) <span class="small" style="opacity:.7">rest are pictures, much cheaper</span></button></div></div>
+    <p class="small dim" style="margin:0">Roughly <b>$${est(30, 6).toFixed(2)}</b> for a 30-second video, <b>$${est(70, 10).toFixed(2)}</b> for 70 seconds (Sora bills per second of clip, in 4, 8 or 12-second clips). Each clip takes about 1 to 5 minutes. Sora refuses real people and famous characters; if a scene is refused, that scene uses a picture instead. Needs an OpenAI account with Sora access. Only works in the downloaded-file version, not inside Claude.</p>
   </div>`;
 }
 

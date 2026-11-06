@@ -184,12 +184,14 @@ function scriptSystem(format, language) {
 Rules: line 1 is the hook and must grab in 2 seconds. No intro, no greeting, no "today". Every line adds something new and keeps momentum. End with a payoff: a twist, punchline, takeaway or a line that loops back to the start. Spoken words only, no stage directions or emojis. Write EVERYTHING (title, lines, caption, hashtags) in ${language}, natural and native-sounding, not translated.`;
 }
 
-function scriptSpec(format, lengthSec, language = "English") {
+function scriptSpec(format, lengthSec, language = "English", platforms = []) {
+  const rules = platformRulesText(platforms, lengthSec);
+  const posts = postsSpec(platforms);
   return `Hook style: ${format.hookStyle}
 Structure: ${format.structure}
 Narrator: ${format.voiceStyle}
-Length: ${lengthSec}s = about ${targetWords(lengthSec, language)} ${unitName(language)} in ${targetLines(lengthSec)} lines (one beat per line, short lines).
-JSON: {"title":"max 8 words","lines":["..."],"caption":"one-sentence social caption","hashtags":["#tag"]}`;
+Length: ${lengthSec}s = about ${targetWords(lengthSec, language)} ${unitName(language)} in ${targetLines(lengthSec)} lines (one beat per line, short lines).${rules ? "\n" + rules : ""}
+JSON: {"title":"max 8 words","lines":["..."],"caption":"one-sentence social caption","hashtags":["#tag"]${posts ? ',"posts":{...}' : ""}}${posts ? "\n" + posts : ""}`;
 }
 
 function scriptPrompt(o) {
@@ -198,8 +200,8 @@ function scriptPrompt(o) {
     prompt: `Idea: ${o.idea}
 Series: ${o.request.slice(0, 300)}
 ${refsText(o.refs)}
-${scriptSpec(o.format, o.lengthSec, o.language)}`,
-    maxTokens: 900,
+${scriptSpec(o.format, o.lengthSec, o.language, o.platforms)}`,
+    maxTokens: 900 + (o.platforms?.length || 0) * 120,
   };
 }
 
@@ -210,18 +212,19 @@ function rewritePrompt(o) {
 Draft:
 ${o.script.lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}
 Issues: ${o.issues.join("; ")}
-${scriptSpec(o.format, o.lengthSec, o.language)}`,
-    maxTokens: 900,
+${scriptSpec(o.format, o.lengthSec, o.language, o.platforms)}`,
+    maxTokens: 900 + (o.platforms?.length || 0) * 120,
   };
 }
 
-function checkPrompt(script, lengthSec, language = "English") {
+function checkPrompt(script, lengthSec, language = "English", platforms = []) {
+  const rules = platformRulesText(platforms, lengthSec);
   return {
     system: "You are a strict short-form video script editor. Reply with JSON only.",
     prompt: `Target: ${lengthSec}s spoken in ${language}. Write the issues in English.
 ${script.lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}
-Score 1-10: hook (grabs in 2s), pacing, escalation (keeps momentum), ending (strong payoff). List concrete fixes. pass=true only if every score >= 7.
-JSON: {"hook":0,"pacing":0,"escalation":0,"ending":0,"issues":["..."],"pass":true}`,
+${rules ? rules + "\n" : ""}Score 1-10: hook (grabs in 2s), pacing, escalation (keeps momentum), ending (strong payoff)${rules ? ", rules (follows every platform rule above; anything that could get it demonetized scores low)" : ""}. List concrete fixes. pass=true only if every score >= 7.
+JSON: {"hook":0,"pacing":0,"escalation":0,"ending":0,${rules ? '"rules":0,' : ""}"issues":["..."],"pass":true}`,
     maxTokens: 300,
   };
 }
@@ -424,12 +427,14 @@ function keywords(text, style) {
 // ---------------------------------------------------------------- style from a free-text content type
 const CAPTION_OPTIONS = ["bold-yellow", "clean-white", "red-highlight", "glitch"];
 const MUSIC_OPTIONS = ["chill-pad", "upbeat-pulse", "tense-pulse", "dark-drone", "eerie-tone", "none"];
-function designPrompt(contentType, request, refs) {
+function designPrompt(contentType, request, refs, platforms = []) {
+  const ps = pickPlatforms(platforms);
   return {
-    system: "You design the style for a series of short-form videos (TikTok, Reels, Shorts). Reply with JSON only.",
+    system: `You design the style for a series of short-form videos (${ps.length ? ps.map((p) => p.name).join(", ") : "TikTok, Reels, Shorts"}). Reply with JSON only.`,
     prompt: `Content type: ${contentType || "(not given: work it out from the request)"}
 Request: ${request.slice(0, 300)}
 ${refsText(refs)}
+${ps.length ? "The style must be original and advertiser-friendly so it can earn on these platforms (no copied characters or brands)." : ""}
 Design a style that fits. captionStyle is one of: ${CAPTION_OPTIONS.join(", ")}. musicStyle is one of: ${MUSIC_OPTIONS.join(", ")}. lengthSec between 20 and 60.
 JSON: {"name":"2-4 words","emoji":"one emoji","description":"one line","hookStyle":"how line 1 grabs","structure":"beat by beat","visualStyle":"what the pictures look like","voiceStyle":"how the narrator sounds","captionStyle":"bold-yellow","musicStyle":"chill-pad","lengthSec":40}`,
     maxTokens: 500,

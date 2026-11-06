@@ -55,33 +55,44 @@ async function llm(ctx, task, tier, p, input) {
   return { json: result.json, provider: provider.id, cost: result.r.cost };
 }
 
-function normalizeScript(j) {
+function normalizeScript(j, platforms = []) {
   const lines = (Array.isArray(j?.lines) ? j.lines : []).map((l) => String(l).trim()).filter(Boolean);
   if (lines.length < 3) throw new ProviderError("bad_output", "Script came back too short: " + JSON.stringify(j).slice(0, 300), { retryable: true });
-  return {
+  const s = {
     title: String(j.title || lines[0]).slice(0, 80), hook: lines[0], lines,
     caption: String(j.caption || ""), hashtags: (Array.isArray(j.hashtags) ? j.hashtags : []).map(String).slice(0, 8),
   };
+  if (platforms.length) s.posts = normalizePosts(platforms, j.posts, s);
+  return s;
 }
-function localScriptIssues(s, lengthSec, lang = "English") {
+function localScriptIssues(s, lengthSec, lang = "English", minSec = 0) {
   const issues = [];
   const n = countUnits(s.lines.join(" "), lang);
   const target = targetWords(lengthSec, lang);
   const unit = unitName(lang);
-  if (n < target * 0.7) issues.push(`Too short: ${n} ${unit}, need about ${target}.`);
+  const floor = minSec ? Math.max(target * 0.7, targetWords(minSec + 4, lang)) : target * 0.7;
+  if (n < floor) issues.push(`Too short: ${n} ${unit}, need about ${Math.max(target, Math.ceil(floor))}${minSec ? " (it must run over 1 minute to earn money)" : ""}.`);
   if (n > target * 1.35) issues.push(`Too long: ${n} ${unit}, need about ${target}.`);
   if (/^(hi|hello|hey|welcome to my|today|in this video|so,)/i.test(s.lines[0])) issues.push("Boring intro: start with the hook.");
   if (s.lines[0].split(/\s+/).length > 24) issues.push("Hook is too long. Make line 1 punchier.");
   return issues;
+}
+/** After a rewrite, keep any post text the new draft didn't include. */
+const keepPosts = (next, prev) => (prev?.posts && !next.posts ? { ...next, posts: prev.posts } : next);
+/** Same split of the narration across scenes as the renderer uses. */
+function sceneDurations(scenes, speech) {
+  const w = scenes.map((s) => s.text.length + 10);
+  const sum = w.reduce((a, b) => a + b, 0) || 1;
+  return w.map((x) => Math.max(0.8, (x / sum) * (speech || 30)));
 }
 const blobKey = (v, name) => `${v.id}:${name}:${Date.now().toString(36)}`;
 
 const STEP_FNS = {
   async script(ctx) {
     const { project: P, video: V } = ctx;
-    const p = scriptPrompt({ idea: V.idea, request: P.request, format: P.format, lengthSec: P.lengthSec, language: P.language, refs: P.refs });
-    const r = await llm(ctx, "script", "quality", p, { idea: V.idea, angle: V.angle, request: P.request, format: P.format, lengthSec: P.lengthSec });
-    return { output: normalizeScript(r.json), provider: r.provider, cost: r.cost };
+    const p = scriptPrompt({ idea: V.idea, request: P.request, format: P.format, lengthSec: P.lengthSec, language: P.language, refs: P.refs, platforms: P.platforms || [] });
+    const r = await llm(ctx, "script", "quality", p, { idea: V.idea, angle: V.angle, request: P.request, format: P.format, lengthSec: P.lengthSec, platforms: P.platforms });
+    return { output: normalizeScript(r.json, P.platforms || []), provider: r.provider, cost: r.cost };
   },
   async script_check(ctx) {
     const { project: P, video: V } = ctx;
@@ -89,21 +100,50 @@ const STEP_FNS = {
     if (V.steps.script.provider === "edited") return { output: { edited: true, issues: [] } };
     // practice templates only write English: don't measure them against another language
     const lang = ctx.video.steps.script.provider === "offline-writer" ? "English" : P.language;
-    const local = localScriptIssues(s, P.lengthSec, lang);
-    const chk = await llm(ctx, "check", "cheap", checkPrompt(s, P.lengthSec, P.language), { script: s });
+    const local = localScriptIssues(s, P.lengthSec, lang, lang === P.language ? P.minSec : 0);
+    const chk = await llm(ctx, "check", "cheap", checkPrompt(s, P.lengthSec, P.language, P.platforms || []), { script: s });
     const sc = chk.json || {};
     const ai = Array.isArray(sc.issues) ? sc.issues.map(String) : [];
-    const weak = ["hook", "pacing", "escalation", "ending"].filter((k) => Number(sc[k]) > 0 && Number(sc[k]) < 7);
+    const weak = ["hook", "pacing", "escalation", "ending", "rules"].filter((k) => Number(sc[k]) > 0 && Number(sc[k]) < 7);
     if (!local.length && sc.pass !== false && !weak.length) return { output: { scores: sc, issues: [] }, provider: chk.provider, cost: chk.cost };
     const issues = [...local, ...ai].slice(0, 6);
-    const rw = await llm(ctx, "rewrite", "quality", rewritePrompt({ script: s, issues, format: P.format, lengthSec: P.lengthSec, language: P.language, refs: P.refs }), {
-      idea: V.idea + " (v2)", angle: V.angle, request: P.request, format: P.format, lengthSec: P.lengthSec,
+    const rw = await llm(ctx, "rewrite", "quality", rewritePrompt({ script: s, issues, format: P.format, lengthSec: P.lengthSec, language: P.language, refs: P.refs, platforms: P.platforms || [] }), {
+      idea: V.idea + " (v2)", angle: V.angle, request: P.request, format: P.format, lengthSec: P.lengthSec, platforms: P.platforms,
     });
-    await ctx.patchStep("script", { output: normalizeScript(rw.json) });
+    await ctx.patchStep("script", { output: keepPosts(normalizeScript(rw.json, P.platforms || []), s) });
     return { output: { scores: sc, issues, rewrote: true }, provider: chk.provider, cost: chk.cost + rw.cost };
   },
   async scenes(ctx) {
-    const lines = ctx.video.steps.script.output.lines;
+    return STEP_FNS._scenes(ctx, ctx.video.steps.script.output.lines);
+  },
+  async voice(ctx) {
+    let cur = ctx.video.steps.script.output;
+    let r = await STEP_FNS._speak(ctx, cur.lines);
+    // platforms that only pay for 1 min+ videos: if the narration came out short, add real content (never padding)
+    const min = ctx.project.minSec;
+    let cost = r.cost;
+    for (let round = 0; min && r.output.duration + 0.8 < min + 1 && round < 2 && ctx.video.steps.script.provider !== "edited" && ctx.video.steps.visuals.status !== "done"; round++) {
+      const P = ctx.project, s = cur;
+      const need = Math.ceil(min + 4 - r.output.duration);
+      const issues = [`The narration runs ${r.output.duration.toFixed(0)}s but must run over ${min + 3}s to earn money on ${pickPlatforms(P.platforms).filter((p) => p.payMinSec).map((p) => p.name).join(" and ")}. Add about ${need} seconds of NEW content (more detail, another beat, a stronger ending), not filler or repetition.`];
+      const rw = await llm({ ...ctx, state: { ...ctx.state, seed: (ctx.state.seed || 0) + 10 + round } }, "rewrite", "quality",
+        rewritePrompt({ script: s, issues, format: P.format, lengthSec: Math.max(P.lengthSec, min + 9), language: P.language, refs: P.refs, platforms: P.platforms || [] }),
+        { idea: ctx.video.idea + " (longer " + round + ")", angle: ctx.video.angle, request: P.request, format: P.format, lengthSec: Math.max(P.lengthSec, min + 9), platforms: P.platforms },
+      );
+      const next = keepPosts(normalizeScript(rw.json, P.platforms || []), s);
+      if (next.lines.join(" ").length <= s.lines.join(" ").length) break; // AI couldn't add anything; keep what we have
+      await ctx.patchStep("script", { output: next });
+      const sc = await STEP_FNS._scenes(ctx, next.lines);
+      await ctx.patchStep("scenes", { output: sc.output });
+      cost += rw.cost + sc.cost;
+      cur = next;
+      r = await STEP_FNS._speak(ctx, cur.lines);
+      cost += r.cost;
+    }
+    return { ...r, cost };
+  },
+  // helpers (not steps): take the lines directly because ctx.video doesn't refresh inside a step
+  async _scenes(ctx, lines) {
     const r = await llm(ctx, "scenes", "cheap", scenesPrompt(lines, ctx.project.format), { lines, format: ctx.project.format });
     const raw = Array.isArray(r.json?.scenes) ? r.json.scenes : [];
     if (!raw.length) throw new ProviderError("bad_output", "No scenes returned", { retryable: true });
@@ -117,8 +157,8 @@ const STEP_FNS = {
     });
     return { output: out, provider: r.provider, cost: r.cost };
   },
-  async voice(ctx) {
-    const text = ctx.video.steps.script.output.lines.join(" ");
+  async _speak(ctx, lines) {
+    const text = lines.join(" ");
     const { result, provider } = await withProviders("voice", ctx, (p) => p.speak({ text, style: ctx.project.format.voiceStyle, language: ctx.project.language }));
     if (!result.blob) return { output: { none: true, duration: result.duration }, provider: provider.id, cost: 0 };
     const buf = await decodeAudio(result.blob).catch(() => null);
@@ -131,18 +171,22 @@ const STEP_FNS = {
     const scenes = ctx.video.steps.scenes.output;
     const done = [...(ctx.state.output?.partial || [])];
     let cost = 0;
+    const durs = sceneDurations(scenes, ctx.video.steps.voice.output.duration);
+    const sora = soraSettings();
     for (let i = done.length; i < scenes.length; i++) {
       const s = scenes[i];
-      const { result, provider } = await withProviders("image", ctx, (p) =>
-        p.generate({ prompt: s.visual, search: s.search, text: s.text, format: ctx.project.format, avoid: done.map((d) => d.sourceId).filter(Boolean) }),
+      // Sora "first scene only": the rest come from the next visuals option
+      const sctx = sora.mode === "hook" && i > 0 ? { ...ctx, state: { ...ctx.state, avoid: [...(ctx.state.avoid || []), "sora"] } } : ctx;
+      const { result, provider } = await withProviders("image", sctx, (p) =>
+        p.generate({ prompt: s.visual, search: s.search, text: s.text, format: ctx.project.format, avoid: done.map((d) => d.sourceId).filter(Boolean), seconds: durs[i] }),
       );
       const key = blobKey(ctx.video, "scene" + i);
       await blobs.put(key, result.blob);
       cost += result.cost || 0;
-      done.push({ key, provider: provider.id, sourceId: result.sourceId });
+      done.push({ key, provider: provider.id, sourceId: result.sourceId, video: !!result.video });
       await ctx.progress({ partial: done }); // keep finished images if a later one fails
     }
-    return { output: { images: done.map((d) => d.key), partial: done }, provider: [...new Set(done.map((d) => d.provider))].join(", "), cost };
+    return { output: { images: done.map((d) => d.key), clips: done.filter((d) => d.video).length, partial: done }, provider: [...new Set(done.map((d) => d.provider))].join(", "), cost };
   },
   async music(ctx) {
     const style = ctx.project.format.musicStyle;
@@ -169,6 +213,7 @@ const STEP_FNS = {
           words: st.captions.status === "done" ? st.captions.output.words : [],
           captionStyle: ctx.project.format.captionStyle, voiceBlob, duration: st.voice.output.duration,
           musicStyle: st.music.status === "done" ? st.music.output.style : null,
+          safe: safeZone(ctx.project.platforms), aiLabel: aiLabelText(ctx.project),
           onProgress: (p) => ctx.setLive({ render: p }),
         }),
       );
@@ -194,7 +239,9 @@ const STEP_FNS = {
     ];
     const failed = checks.filter((c) => !c.ok);
     if (failed.length) throw new ProviderError("quality_failed", "Final check failed: " + failed.map((f) => f.name).join(", "));
-    return { output: { checks } };
+    const seconds = p && isFinite(p.duration) ? p.duration : speech + 0.8;
+    const platforms = platformReport(ctx.project.platforms || [], { seconds, aiLabel: !!aiLabelText(ctx.project), sora: (st.visuals.output.clips || 0) > 0 });
+    return { output: { checks, platforms, seconds } };
   },
 };
 
@@ -289,7 +336,13 @@ async function resumeAll() {
 }
 
 // ---------------------------------------------------------------- projects
-async function createProject({ request, contentType, count, lengthSec, language, refs }) {
+/** Visible AI label burned into the video (required for Chinese platforms, optional elsewhere). */
+function aiLabelText(p) {
+  if (!p.aiLabel) return "";
+  return /Chinese/.test(p.language || "") ? "AI生成" : hasChina(p.platforms) ? "AI生成 · AI-generated" : "AI-generated";
+}
+
+async function createProject({ request, contentType, count, lengthSec, language, refs, platforms, aiLabel }) {
   request = request.trim().slice(0, 2000);
   if (!request) throw new Error("Type what you want to make first ✍️");
   contentType = (contentType || "").trim().slice(0, 200);
@@ -297,6 +350,8 @@ async function createProject({ request, contentType, count, lengthSec, language,
   const p = {
     id: uid(), title: request.replace(/^(please\s+)?(make|create|generate)\s+(me\s+)?/i, "").slice(0, 70), request, contentType,
     format: fallbackStyle(contentType, request), styleReady: false, count: n, lengthSec: lengthSec || null, language: language || "English",
+    platforms: (platforms || []).filter(platformById), aiLabel: !!aiLabel || hasChina(platforms), lengthAuto: !lengthSec,
+    minSec: payMinSec(platforms) && (!lengthSec || lengthSec >= payMinSec(platforms) - 1) ? payMinSec(platforms) : 0,
     refs: refs && (refs.links?.length || refs.note || refs.files?.length) ? { links: refs.links || [], note: refs.note || "", files: refs.files || [], info: null } : null,
     status: "planning", ideas: [], avoid: [], cost: 0, deletedAt: null, createdAt: now(), updatedAt: now(),
   };
@@ -319,10 +374,10 @@ async function planProject(projectId) {
     const prov = chain("llm", p.avoid || []).find((x) => !x.offline);
     if (prov) {
       try {
-        const key = "style:" + (await hash(p.contentType, p.contentType ? "" : p.request, refsText(p.refs)));
+        const key = "style:" + (await hash(p.contentType, p.contentType ? "" : p.request, refsText(p.refs), (p.platforms || []).join()));
         let j = await kv.get(key);
         if (!j) {
-          const r = await prov.complete({ task: "style", tier: "cheap", ...designPrompt(p.contentType, p.request, p.refs), input: {} });
+          const r = await prov.complete({ task: "style", tier: "cheap", ...designPrompt(p.contentType, p.request, p.refs, p.platforms || []), input: {} });
           j = parseJson(r.text);
           await kv.set(key, j);
           await addCost(projectId, r.cost);
@@ -332,7 +387,7 @@ async function planProject(projectId) {
         console.warn("style design failed, using the built-in match", e);
       }
     }
-    p = await update("projects", projectId, (x) => ({ format: style, styleReady: true, lengthSec: x.lengthSec || style.lengthSec }));
+    p = await update("projects", projectId, (x) => ({ format: style, styleReady: true, lengthSec: x.lengthSec || platformAutoLength(x.platforms, style.lengthSec) }));
   }
   if (p.count === 1) {
     if (!(await db.byIndex("videos", "projectId", projectId)).length) await createVideos(p, [{ title: p.title, angle: p.request }]);
