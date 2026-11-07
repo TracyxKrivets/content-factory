@@ -22,7 +22,8 @@ for (const [name, code] of [["app", app], ["shell", read("shell/shell.js")], ["v
   }
 }
 const safe = (s) => s.replace(/<\/script/gi, "<\\/script");
-const source = JSON.stringify({ files, builtAt: new Date().toISOString() }).replace(/<\//g, "<\\/");
+// UPDATE_URL: where the desktop app looks for new versions (carried inside the app file itself)
+const source = JSON.stringify({ files, builtAt: new Date().toISOString(), ...(process.env.UPDATE_URL ? { updateUrl: process.env.UPDATE_URL } : {}) }).replace(/<\//g, "<\\/");
 const out = read("index.template.html")
   .replace("/*SHELLCSS*/", () => read("shell/shell.css"))
   .replace("/*VENDOR*/", () => safe(vendor))
@@ -30,4 +31,12 @@ const out = read("index.template.html")
   .replace("/*SHELL*/", () => safe(read("shell/shell.js")));
 fs.mkdirSync(path.join(dir, "dist"), { recursive: true });
 fs.writeFileSync(path.join(dir, "dist/content-factory.html"), out);
+// update package for the desktop app: dist/update/app.html + latest.json (notes from UPDATE_NOTES)
+{
+  const { createHash } = await import("node:crypto");
+  const version = (out.match(/"builtAt":"([^"]+)"/) || [])[1];
+  fs.mkdirSync(path.join(dir, "dist/update"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "dist/update/app.html"), out);
+  fs.writeFileSync(path.join(dir, "dist/update/latest.json"), JSON.stringify({ version, file: "app.html", sha256: createHash("sha256").update(out).digest("hex"), notes: process.env.UPDATE_NOTES || "" }, null, 1));
+}
 console.log(`dist/content-factory.html  ${(out.length / 1024).toFixed(0)} KB`);

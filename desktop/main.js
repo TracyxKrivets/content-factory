@@ -5,6 +5,9 @@
 // - Websites (billing, plans, "get a key") open in windows inside the app, with logins remembered.
 const { app, BrowserWindow, shell, session, Menu, ipcMain, net } = require("electron");
 const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
+const PKG = require("./package.json");
 
 if (!app.requestSingleInstanceLock()) app.quit();
 
@@ -29,7 +32,7 @@ function createWindow() {
       backgroundThrottling: false, // keep making videos when the window is minimised
     },
   });
-  win.loadFile(path.join(__dirname, "app", "index.html"));
+  loadApp();
   // links and pop-ups (billing pages, "Get a key") open in an in-app window
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) openSiteWindow(url);
@@ -42,6 +45,121 @@ function createWindow() {
     }
   });
 }
+
+// ---- automatic updates: fixes published from Claude arrive here without reinstalling
+// The app is one HTML file. Updates are saved in %APPDATA%\Content Factory\app-update and used
+// when they're newer than the copy inside the .exe. A broken update is undone automatically.
+const BUNDLED = path.join(__dirname, "app", "index.html");
+const updDir = () => path.join(app.getPath("userData"), "app-update");
+const updFile = () => path.join(updDir(), "index.html");
+const prevFile = () => path.join(updDir(), "previous.html");
+const readJson = (f, d) => {
+  try {
+    return JSON.parse(fs.readFileSync(f, "utf8"));
+  } catch {
+    return d;
+  }
+};
+const state = () => readJson(path.join(updDir(), "state.json"), { bad: [] });
+const saveState = (s) => {
+  fs.mkdirSync(updDir(), { recursive: true });
+  fs.writeFileSync(path.join(updDir(), "state.json"), JSON.stringify(s, null, 1));
+};
+const versionOfText = (t) => (String(t).match(/"builtAt":"([^"]+)"/) || [])[1] || "";
+const versionOf = (f) => {
+  try {
+    return versionOfText(fs.readFileSync(f, "utf8"));
+  } catch {
+    return "";
+  }
+};
+// where to look for updates: set in the app, baked into the .exe, or carried inside the running app file
+const sourceInFile = (f) => {
+  try {
+    return (fs.readFileSync(f, "utf8").match(/"updateUrl":"(https:\/\/[^"]+)"/) || [])[1] || "";
+  } catch {
+    return "";
+  }
+};
+const updateSource = () => state().source || PKG.cfUpdate?.url || sourceInFile(current?.file || BUNDLED) || sourceInFile(BUNDLED);
+/** The newest copy of the app that isn't known to be broken. */
+function bestApp() {
+  const bad = state().bad || [];
+  const options = [{ file: BUNDLED, version: versionOf(BUNDLED), updated: false }];
+  for (const f of [updFile(), prevFile()]) if (fs.existsSync(f)) options.push({ file: f, version: versionOf(f), updated: true });
+  return options.filter((o) => o.version && !bad.includes(o.version)).sort((a, b) => (a.version < b.version ? 1 : -1))[0] || options[0];
+}
+let current = null, bootTimer = null, pendingUpdate = null;
+function loadApp() {
+  current = bestApp();
+  clearTimeout(bootTimer);
+  if (current.updated) {
+    // if the update doesn't start within 30 s, mark it broken and go back to the last good copy
+    bootTimer = setTimeout(() => {
+      const s = state();
+      s.bad = [...new Set([...(s.bad || []), current.version])];
+      saveState(s);
+      loadApp();
+    }, 30000);
+  }
+  win.loadFile(current.file);
+}
+ipcMain.on("cf-booted", (e) => {
+  if (win && e.sender === win.webContents) clearTimeout(bootTimer);
+});
+/** Check the update address; download, verify and install a newer version. */
+async function checkForUpdate() {
+  const src = updateSource();
+  if (!src) return { status: "off" };
+  try {
+    const res = await net.fetch(src + (src.includes("?") ? "&" : "?") + "t=" + Date.now(), { cache: "no-store" });
+    if (!res.ok) return { status: "error", message: `The update address answered ${res.status}` };
+    const m = await res.json();
+    const have = [bestApp().version, fs.existsSync(updFile()) ? versionOf(updFile()) : ""].sort().pop();
+    if (!m.version || m.version <= have || state().bad.includes(m.version)) return { status: "latest", version: bestApp().version };
+    const r2 = await net.fetch(new URL(m.file || "app.html", src).href + "?v=" + encodeURIComponent(m.version), { cache: "no-store" });
+    if (!r2.ok) return { status: "error", message: `Couldn't download the update (${r2.status})` };
+    const text = await r2.text();
+    return installHtml(text, m);
+  } catch (err) {
+    return { status: "error", message: String((err && err.message) || err) };
+  }
+}
+function installHtml(text, m = {}) {
+  const v = versionOfText(text);
+  if (!/id="cf-source"/.test(text) || !v) return { status: "error", message: "That isn't a Content Factory app file" };
+  if (m.sha256 && crypto.createHash("sha256").update(text).digest("hex") !== m.sha256) return { status: "error", message: "The download was damaged; it will try again later" };
+  if (m.version && v !== m.version) return { status: "error", message: "The update didn't match its description" };
+  if (v <= bestApp().version) return { status: "latest", version: bestApp().version };
+  fs.mkdirSync(updDir(), { recursive: true });
+  // keep the update that's working now as a fallback, in case the new one won't start
+  if (fs.existsSync(updFile()) && current?.file === updFile()) fs.copyFileSync(updFile(), prevFile());
+  fs.writeFileSync(updFile() + ".tmp", text);
+  fs.renameSync(updFile() + ".tmp", updFile());
+  const s = state();
+  s.bad = (s.bad || []).filter((x) => x !== v);
+  s.notes = m.notes || "";
+  saveState(s);
+  pendingUpdate = { version: v, notes: m.notes || "" };
+  win?.webContents.send("cf-update-ready", pendingUpdate);
+  return { status: "installed", ...pendingUpdate };
+}
+ipcMain.handle("cf-update-check", (e) => (win && e.sender === win.webContents ? checkForUpdate() : { status: "error" }));
+ipcMain.handle("cf-update-install-file", (e, text) => (win && e.sender === win.webContents ? installHtml(String(text || "")) : { status: "error" }));
+ipcMain.handle("cf-update-info", () => ({ version: current?.version, updated: !!current?.updated, source: updateSource(), pending: pendingUpdate, appVersion: app.getVersion() }));
+ipcMain.handle("cf-update-source", (e, url) => {
+  if (!win || e.sender !== win.webContents) return false;
+  const s = state();
+  s.source = /^https:\/\//i.test(url || "") ? url : "";
+  saveState(s);
+  return true;
+});
+ipcMain.on("cf-restart", (e) => {
+  if (win && e.sender === win.webContents) {
+    pendingUpdate = null;
+    loadApp();
+  }
+});
 
 // ---- websites inside the app (separate, persistent login storage; no access to the app's bridge)
 const plainUA = (ua) => ua.replace(/\s(Electron|content-factory|Content Factory)\/\S+/gi, "");
@@ -128,5 +246,8 @@ app.whenReady().then(() => {
     ]),
   );
   createWindow();
+  // look for updates shortly after starting, then every 30 minutes
+  setTimeout(checkForUpdate, 8000);
+  setInterval(checkForUpdate, 30 * 60000);
 });
 app.on("window-all-closed", () => app.quit());

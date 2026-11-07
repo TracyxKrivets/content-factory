@@ -741,6 +741,49 @@ const NET_HOSTS = [
   ["Google Gemini", "https://generativelanguage.googleapis.com/v1beta/models"], ["ElevenLabs", "https://api.elevenlabs.io/v1/models"],
   ["Pexels", "https://api.pexels.com/v1/curated?per_page=1"],
 ];
+/** Desktop app: which version is running, automatic updates from Claude, install from a file. */
+function UpdatesCard() {
+  const [info, setInfo] = useState(null);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const A = window.cfApp;
+  useEffect(() => {
+    A?.info().then(setInfo).catch(() => {});
+  }, []);
+  if (!A) return null;
+  const when = (v) => (v ? new Date(v).toLocaleString() : "?");
+  const say = (r) =>
+    setMsg(
+      r.status === "installed" ? "✨ Update downloaded. Press Restart now in the bar at the bottom." :
+      r.status === "latest" ? "✅ You have the newest version." :
+      r.status === "off" ? "Automatic updates aren't connected yet." : "⚠️ " + (r.message || "Couldn't check right now."),
+    );
+  const check = async () => {
+    setBusy(true);
+    say(await A.check());
+    setInfo(await A.info());
+    setBusy(false);
+  };
+  const fromFile = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    say(await A.installFile(await f.text()));
+  };
+  return html`<h2 style="margin-top:34px">✨ Updates</h2>
+    <div class="card">
+      <div class="row" style="gap:10px;flex-wrap:wrap"><div style="flex:1;min-width:240px">
+        <b>Version from ${when(info?.version)}</b>${info?.updated ? html`<span class="small dim"> · updated automatically</span>` : ""}
+        <div class="small dim" style="margin-top:4px">${info?.source
+          ? "Fixes made in Claude arrive here by themselves (checked when the app opens and every 30 minutes)."
+          : "Automatic updates aren't connected yet. You can still install a new app file you got from Claude."}</div></div>
+        ${info?.source && html`<button class="btn small primary" disabled=${busy} onClick=${check}>${busy ? "Checking…" : "Check for updates"}</button>`}
+        <label class="btn small" style="cursor:pointer">Install from a file<input type="file" accept=".html,text/html" style="display:none" onChange=${fromFile} /></label>
+      </div>
+      ${msg && html`<p class="small" style="margin:10px 0 0">${msg}</p>`}
+    </div>`;
+}
+
 function ConnectionCard() {
   const [res, setRes] = useState(null);
   const [info, setInfo] = useState(null);
@@ -830,6 +873,7 @@ function SystemPage() {
           <button class="btn small" title="Hide" onClick=${() => act(e, "resolve")}>✕</button></div></div>
       <details><summary class="small">Advanced</summary><pre class="tech">step: ${e.step} · code: ${e.error.code}${e.error.provider ? " · provider: " + e.error.provider : ""}\n${e.error.technical}</pre></details>
     </div>`)}</div>
+    <${UpdatesCard} />
     <${ConnectionCard} />
     ${checks && html`<h2 style="margin-top:34px">🩺 Health</h2><div class="grid">
       ${checks.map((c) => html`<div class="card"><b>${c.ok ? "✅" : "⚠️"} ${c.name}</b><div class="small dim">${c.msg}</div>

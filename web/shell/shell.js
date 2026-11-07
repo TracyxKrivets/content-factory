@@ -140,8 +140,39 @@
   let readyResolve;
   const appReady = new Promise((r) => (readyResolve = r));
   window.__cfShell = {
-    ready: () => readyResolve(true),
+    ready: () => {
+      readyResolve(true);
+      window.cfApp?.booted(); // desktop app: this version started fine, keep it
+    },
   };
+
+  // ---------------------------------------------------------------- desktop app: "update ready" bar
+  // Lives in the shell so no change to the app can ever hide it.
+  if (window.cfApp?.onUpdate) {
+    const show = (info) => {
+      document.getElementById("cfs-update")?.remove();
+      const bar = document.createElement("div");
+      bar.id = "cfs-update";
+      bar.setAttribute("role", "status");
+      bar.style.cssText = "position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:2147483000;background:#162447;color:#fff;border:1px solid #ffb84d;border-radius:14px;padding:12px 14px;display:flex;gap:10px;align-items:center;box-shadow:0 10px 30px rgba(0,0,0,.45);font:14px system-ui,sans-serif;max-width:min(680px,92vw)";
+      const txt = document.createElement("span");
+      txt.style.flex = "1";
+      txt.textContent = "✨ An update to the app is ready" + (info?.notes ? ": " + String(info.notes).replace(/[.!]?$/, ".") : ".") + " Videos being made will carry on after the restart.";
+      const go = document.createElement("button");
+      go.textContent = "Restart now";
+      go.style.cssText = "background:#ffb84d;color:#111;border:0;border-radius:10px;padding:8px 14px;font-weight:700;cursor:pointer";
+      go.onclick = () => window.cfApp.restart();
+      const later = document.createElement("button");
+      later.textContent = "Later";
+      later.title = "It installs by itself next time you open the app";
+      later.style.cssText = "background:transparent;color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:10px;padding:8px 12px;cursor:pointer";
+      later.onclick = () => bar.remove();
+      bar.append(txt, go, later);
+      document.body.appendChild(bar);
+    };
+    window.cfApp.onUpdate(show);
+    window.cfApp.info().then((i) => i?.pending && show(i.pending)).catch(() => {});
+  }
 
   async function boot() {
     const activeId = await meta.get("active");
