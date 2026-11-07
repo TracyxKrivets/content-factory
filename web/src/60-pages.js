@@ -100,6 +100,7 @@ function HomePage() {
 
     <div class="gen-bar">
       <button class="btn primary huge" onClick=${generate} disabled=${busy}>${busy ? html`<span class="spin">◐</span>` : "GENERATE VIDEOS"}</button>
+      <${CostLine} count=${count * Math.max(1, last.platforms?.length || 1)} lengthSec=${last.lengthSec || 30} minSec=${payMinSec(last.platforms || [])} />
       <p class="dim small" style="text-align:center;margin-top:10px">${last.platforms?.length ? `${count * last.platforms.length} video${count * last.platforms.length > 1 ? "s" : ""} (${count} per platform)` : `${count} video${count > 1 ? "s" : ""}`}${type.trim() ? ` · ${type.trim().slice(0, 40)}` : ""}${last.lengthSec ? ` · ${last.lengthSec} sec each` : ""}${last.language && last.language !== "English" ? ` · ${last.language}` : ""}${last.platforms?.length ? ` · for ${pickPlatforms(last.platforms).map((p) => p.name.split(" ")[0]).join(", ")}` : ""}</p>
     </div>
 
@@ -111,6 +112,22 @@ function HomePage() {
         <span class="small dim">${STATUS[p.status]?.[0]} · ${ago(p.createdAt)}</span></a>`)}</div>
     </div>`}
   </div>`;
+}
+
+/** "About $0.40 for these videos · $9.60 left of your budget" under the Generate button. */
+function CostLine({ count, lengthSec, minSec }) {
+  const m = useData(() => monthSpend());
+  useData(async () => keys.all());
+  const per = estimateVideoCost(Math.max(lengthSec, minSec ? minSec + 9 : 0));
+  const total = per * count;
+  const b = budget();
+  const left = b.monthly ? b.monthly - (m?.total || 0) : null;
+  if (!total && left == null) return null;
+  return html`<p class="small" style=${"text-align:center;margin:10px 0 0;" + (left != null && total > left ? "color:#ffe0a0" : "opacity:.8")}>
+    ${total ? `💰 About ${money(total)} for ${count > 1 ? "these " + count + " videos" : "this video"}` : "💰 Free with your current choices"}
+    ${left != null ? ` · ${money(Math.max(0, left))} left of your ${money(b.monthly)} budget` : ""}
+    ${left != null && total > left ? html` · <b>this may go over your budget</b> (videos pause when it's reached)` : ""}
+    <button class="btn small" style="margin-left:6px;padding:2px 8px" onClick=${() => go("money")}>Money</button></p>`;
 }
 
 /** Pick where the videos will be posted. Each platform's rules shape the script, length and captions. */
@@ -613,6 +630,11 @@ async function testKey(name, value) {
         body: JSON.stringify({ model: MODELS.anthropic.cheap, max_tokens: 1, messages: [{ role: "user", content: "hi" }] }),
       }),
     OPENAI_API_KEY: () => fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${value}` } }),
+    ANTHROPIC_ADMIN_KEY: () =>
+      fetch(`https://api.anthropic.com/v1/organizations/cost_report?starting_at=${encodeURIComponent(new Date(Date.now() - 864e5).toISOString())}&limit=1`, {
+        headers: { "x-api-key": value, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
+      }),
+    OPENAI_ADMIN_KEY: () => fetch(`https://api.openai.com/v1/organization/costs?start_time=${Math.floor(Date.now() / 1000) - 86400}&limit=1`, { headers: { Authorization: `Bearer ${value}` } }),
     GEMINI_API_KEY: () => fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", { headers: { "x-goog-api-key": value } }),
     ELEVENLABS_API_KEY: () => fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": value } }),
     PEXELS_API_KEY: () => fetch("https://api.pexels.com/v1/search?query=night&per_page=1", { headers: { Authorization: value } }),
@@ -630,7 +652,7 @@ async function testKey(name, value) {
 }
 
 /** Which jobs a saved key powers, e.g. "Writer, Voice, Visuals". */
-const jobsFor = (name) => ROLES.filter((r) => r.options.some((o) => o.key === name)).map((r) => r.title);
+const jobsFor = (name) => (KEY_DEFS.find((d) => d.name === name)?.admin ? ["your real bills on the 💰 Money page"] : ROLES.filter((r) => r.options.some((o) => o.key === name)).map((r) => r.title));
 const keyLabel = (name) => KEY_DEFS.find((d) => d.name === name)?.label || name;
 
 /** Paste any key(s): the app works out which service each one is for and files it there. */
@@ -675,7 +697,7 @@ function KeyDrop({ results = {}, onTest = () => {}, onAdded = () => {} }) {
       // format doesn't say which service: ask each one (only the services this app uses)
       if (live) {
         let hit = null;
-        for (const d of KEY_DEFS) if ((await testKey(d.name, k.value)).ok) { hit = d.name; break; }
+        for (const d of KEY_DEFS.filter((x) => !x.admin)) if ((await testKey(d.name, k.value)).ok) { hit = d.name; break; }
         if (hit) {
           res.push(file(k.value, hit, ", worked out by testing it"));
           continue;
@@ -708,9 +730,55 @@ function KeyDrop({ results = {}, onTest = () => {}, onAdded = () => {} }) {
         }}>✕</button></div>`)}</div></div>`}
     ${out.length > 0 && html`<div style="display:grid;gap:6px;margin-top:10px">${out.map((r, i) => html`<div class="small" style=${"padding:8px 10px;border-radius:10px;background:" + (r.ok ? "rgba(80,220,140,.12)" : "rgba(255,200,90,.12)")}>
       ${r.ok ? "✓ " : "⚠️ "}${r.text}
-      ${r.ask && html`<div class="chips" style="margin-top:6px">${KEY_DEFS.map((d) => html`<button class="chip" onClick=${() => choose(i, d.name)}>${d.label}</button>`)}</div>`}
+      ${r.ask && html`<div class="chips" style="margin-top:6px">${KEY_DEFS.filter((x) => !x.admin).map((d) => html`<button class="chip" onClick=${() => choose(i, d.name)}>${d.label}</button>`)}</div>`}
     </div>`)}</div>`}
   </div>`;
+}
+
+/** Can this device reach each AI service? (Uses the same connection as the rest of the device.) */
+const NET_HOSTS = [
+  ["Anthropic", "https://api.anthropic.com/v1/models"], ["OpenAI", "https://api.openai.com/v1/models"],
+  ["Google Gemini", "https://generativelanguage.googleapis.com/v1beta/models"], ["ElevenLabs", "https://api.elevenlabs.io/v1/models"],
+  ["Pexels", "https://api.pexels.com/v1/curated?per_page=1"],
+];
+function ConnectionCard() {
+  const [res, setRes] = useState(null);
+  const [info, setInfo] = useState(null);
+  const [online, setOnline] = useState(navigator.onLine !== false);
+  const run = async () => {
+    setOnline(navigator.onLine !== false);
+    if (window.cfNet?.info) window.cfNet.info().then(setInfo).catch(() => {});
+    setRes(Object.fromEntries(NET_HOSTS.map(([n]) => [n, "…"])));
+    await Promise.all(NET_HOSTS.map(async ([n, url]) => {
+      const t0 = performance.now();
+      try {
+        // any answer (even "no key") means the service is reachable
+        await fetch(url, { mode: "no-cors", cache: "no-store", signal: timeout(10000) });
+        setRes((r) => ({ ...r, [n]: `✓ ${Math.round(performance.now() - t0)} ms` }));
+      } catch {
+        setRes((r) => ({ ...r, [n]: "✗ can't reach" }));
+      }
+    }));
+  };
+  useEffect(() => {
+    if (canFetch()) run();
+    const f = () => setOnline(navigator.onLine !== false);
+    window.addEventListener("online", f);
+    window.addEventListener("offline", f);
+    return () => (window.removeEventListener("online", f), window.removeEventListener("offline", f));
+  }, []);
+  const bad = res && Object.values(res).some((v) => v.startsWith("✗"));
+  return html`<h2 style="margin-top:34px">📡 Internet connection</h2>
+    <div class="card">
+      <div class="row"><b style="flex:1">${online ? "✅ This device is online" : "⚠️ This device is offline"}</b>
+        ${canFetch() && html`<button class="btn small" onClick=${run}>Test again</button>`}</div>
+      <div class="small dim" style="margin-top:4px">${window.cfNet
+        ? `The app uses this computer's own internet connection${info?.proxy && info.proxy !== "DIRECT" ? ` through your proxy (${info.proxy})` : ""}, including VPNs and company networks.`
+        : canFetch() ? "The app uses this browser's internet connection." : "Inside Claude, outside services are blocked; use the downloaded app for them."}
+        If the internet drops, videos pause and carry on by themselves when it's back.</div>
+      ${res && html`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px;margin-top:10px">${NET_HOSTS.map(([n]) => html`<div class="small" style=${"padding:6px 10px;border-radius:8px;background:rgba(255,255,255,.04);color:" + (res[n]?.startsWith("✗") ? "var(--red)" : "inherit")}><b>${n}</b> ${res[n]}</div>`)}</div>`}
+      ${bad && html`<p class="small" style="margin:10px 0 0;color:#ffe0a0">Some services can't be reached. Check that you're online, that a firewall or antivirus isn't blocking the app, or try another network.</p>`}
+    </div>`;
 }
 
 // ---------------------------------------------------------------- system
@@ -762,6 +830,7 @@ function SystemPage() {
           <button class="btn small" title="Hide" onClick=${() => act(e, "resolve")}>✕</button></div></div>
       <details><summary class="small">Advanced</summary><pre class="tech">step: ${e.step} · code: ${e.error.code}${e.error.provider ? " · provider: " + e.error.provider : ""}\n${e.error.technical}</pre></details>
     </div>`)}</div>
+    <${ConnectionCard} />
     ${checks && html`<h2 style="margin-top:34px">🩺 Health</h2><div class="grid">
       ${checks.map((c) => html`<div class="card"><b>${c.ok ? "✅" : "⚠️"} ${c.name}</b><div class="small dim">${c.msg}</div>
         ${c.fix && html`<button class="btn small" style="margin-top:8px" onClick=${async () => {

@@ -109,6 +109,13 @@ function App() {
     }
   });
   setRouteFn = setRoute;
+  const [online, setOnline] = useState(() => navigator.onLine !== false);
+  useEffect(() => {
+    const on = () => setOnline(true), off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => (window.removeEventListener("online", on), window.removeEventListener("offline", off));
+  }, []);
   const [t, setT] = useState(null);
   const [c, setC] = useState(null);
   const timer = useRef();
@@ -156,9 +163,11 @@ function App() {
     name === "project" ? html`<${ProjectPage} id=${arg} />` :
     name === "projects" ? html`<${ProjectsPage} />` :
     name === "connect" ? html`<${ConnectPage} />` :
-    name === "system" ? html`<${SystemPage} />` : html`<${HomePage} />`;
+    name === "system" ? html`<${SystemPage} />` :
+    name === "money" ? html`<${MoneyPage} />` : html`<${HomePage} />`;
   return html`
     <${Nav} route=${name} />
+    ${!online && html`<div class="wrap"><div class="banner warn" style="margin-top:6px"><span class="small">📡 <b>No internet.</b> Videos are paused and carry on by themselves as soon as this device is back online. Nothing is lost.</span></div></div>`}
     ${storageBlocked && html`<div class="wrap"><div class="banner bad" style="margin-top:6px">
       <span class="small"><b>Nothing will be saved here.</b> This window is blocking storage (it's probably a file preview or private window). Save the file to your computer and open it in Chrome or Edge to keep your work.</span></div></div>`}
     <main class="wrap">${page}</main>
@@ -176,10 +185,11 @@ function Nav({ route }) {
   const errs = useData(() => kv.get("errors", []).then((l) => l.filter((e) => !e.resolved).length));
   useData(async () => keys.all()); // re-render when keys change
   const practice = practiceMode();
+  const over = useData(async () => budget().monthly > 0 && (await monthSpend()).total >= budget().monthly);
   const L = (r, label, dot) => html`<button type="button" onClick=${() => go(r)} class=${"link" + (route === r || (r === "projects" && route === "project") ? " on" : "")}>${label}${dot && html`<span class="dot" style=${dot === "amber" ? "background:var(--amber)" : ""}></span>`}</button>`;
   return html`<nav class="nav">
     <button type="button" onClick=${() => go("make")} class="logo">CONTENT<br />FACTORY</button>
     ${L("make", "✚ Make")}${L("projects", "📁 Projects")}
-    ${L("connect", "🔌 Connect AI", practice && "amber")}${L("system", "⚙ System", errs > 0 && "red")}
+    ${L("connect", "🔌 Connect AI", practice && "amber")}${L("money", "💰 Money", over && "red")}${L("system", "⚙ System", errs > 0 && "red")}
   </nav>`;
 }

@@ -11,8 +11,16 @@ const DOWNSTREAM = {
 };
 const emptySteps = () => Object.fromEntries(STEPS.map((s) => [s, { status: "waiting", attempts: 0 }]));
 
-async function addCost(projectId, cost) {
-  if (cost) await update("projects", projectId, (p) => ({ cost: (p.cost || 0) + cost }));
+async function addCost(projectId, cost, provider) {
+  if (!cost) return;
+  await update("projects", projectId, (p) => ({ cost: (p.cost || 0) + cost }));
+  await recordSpend(provider, cost);
+}
+
+/** No internet? Wait for it to come back instead of failing (or silently switching to free options). */
+function waitOnline() {
+  if (navigator.onLine !== false) return Promise.resolve();
+  return new Promise((res) => window.addEventListener("online", () => setTimeout(res, 1500), { once: true }));
 }
 
 /** Try each provider in order; retry temporary failures with backoff; fall back to the next. */
@@ -22,7 +30,9 @@ async function withProviders(cap, ctx, fn) {
   if (!list.length) throw new ProviderError("missing_key", `No ${cap} provider available`);
   let last;
   for (const p of list) {
+    if (isPaid(p)) await assertBudget(); // stops here (no silent switch to free) once the month's budget is used
     for (let a = 0; a < 3; a++) {
+      if (!p.offline) await waitOnline();
       try {
         const r = await fn(p);
         down.delete(p.id);
@@ -30,6 +40,10 @@ async function withProviders(cap, ctx, fn) {
       } catch (e) {
         last = toProviderError(e, p.id);
         last.provider = last.provider || p.id;
+        if (last.code === "network" && navigator.onLine === false) {
+          a--; // the connection dropped mid-call: wait, then try the same service again
+          continue;
+        }
         if (last.retryable && a < 2) {
           await sleep(1500 * 2 ** a);
           continue;
@@ -299,7 +313,7 @@ async function runVideo(id) {
       });
       video = await setStep(id, step, { status: res.skipped ? "skipped" : "done", output: res.output, provider: res.provider, error: undefined });
       if (step === "script") video = await update("videos", id, { title: res.output.title });
-      await addCost(project.id, res.cost);
+      await addCost(project.id, res.cost, res.provider);
       await resolveErrors((e) => e.videoId === id && e.step === step);
     } catch (e) {
       const fe = friendly(e, step);
@@ -394,7 +408,7 @@ async function planProject(projectId) {
           const r = await prov.complete({ task: "style", tier: "cheap", ...designPrompt(p.contentType, p.request, p.refs, p.platforms || []), input: {} });
           j = parseJson(r.text);
           await kv.set(key, j);
-          await addCost(projectId, r.cost);
+          await addCost(projectId, r.cost, prov.id);
         }
         style = cleanStyle(j, p.format);
       } catch (e) {
@@ -419,7 +433,7 @@ async function planIdeas(projectId) {
       const r = await prov.complete({ task: "ideas", tier: "cheap", ...pr, input: { request: p.request, count: p.count, format: p.format } });
       const j = parseJson(r.text);
       ideas = (Array.isArray(j.ideas) ? j.ideas : []).map((x) => ({ title: String(x.title || "").slice(0, 80), angle: String(x.angle || x.title || "") })).filter((x) => x.angle);
-      await addCost(projectId, r.cost);
+      await addCost(projectId, r.cost, prov.id);
       if (ideas.length) break;
     } catch (e) {
       lastErr = toProviderError(e, prov.id);

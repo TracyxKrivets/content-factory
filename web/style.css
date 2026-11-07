@@ -153,3 +153,12 @@ details.refs > summary { list-style: none; cursor: pointer; font-weight: 700; co
 .badge.plat.ok { background: rgba(80, 220, 140, 0.14); color: var(--green); border-color: rgba(80, 220, 140, 0.35); }
 .badge.plat.warn { background: rgba(255, 200, 90, 0.14); color: #ffe0a0; border-color: rgba(255, 200, 90, 0.35); }
 .vframe .vplat { position: absolute; top: 8px; left: 8px; z-index: 2; background: rgba(0, 0, 0, 0.6); color: #fff; font-size: 12px; padding: 3px 8px; border-radius: 999px; pointer-events: none; }
+.meter { height: 10px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.meter > div { height: 100%; background: var(--amber); border-radius: 999px; transition: width 0.3s; }
+.bars { display: flex; gap: 10px; align-items: flex-end; height: 120px; margin-top: 8px; }
+.bars .mbar { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; }
+.bars .mbar > div { width: 100%; max-width: 48px; min-height: 0; background: var(--amber); border-radius: 6px 6px 2px 2px; }
+.bars .mbar > span { font-size: 11px; opacity: 0.7; }
+.linkrow { background: none; border: 0; color: inherit; padding: 4px 0; cursor: pointer; width: 100%; font: inherit; }
+.linkrow:hover { opacity: 0.8; }
+.alertcard { border-color: rgba(255, 90, 90, 0.5) !important; }

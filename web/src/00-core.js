@@ -195,6 +195,8 @@ const blobs = {
 const KEY_DEFS = [
   { name: "ANTHROPIC_API_KEY", label: "Anthropic (Claude)", unlocks: "AI scripts", url: "https://console.anthropic.com/settings/keys" },
   { name: "OPENAI_API_KEY", label: "OpenAI", unlocks: "AI scripts, voice, images, exact captions", url: "https://platform.openai.com/api-keys" },
+  { name: "ANTHROPIC_ADMIN_KEY", label: "Anthropic billing (admin)", unlocks: "Real Claude bills on the Money page", url: "https://console.anthropic.com/settings/admin-keys", admin: true },
+  { name: "OPENAI_ADMIN_KEY", label: "OpenAI billing (admin)", unlocks: "Real OpenAI bills on the Money page", url: "https://platform.openai.com/settings/organization/admin-keys", admin: true },
   { name: "GEMINI_API_KEY", label: "Google Gemini", unlocks: "AI scripts, voice, images", url: "https://aistudio.google.com/apikey" },
   { name: "ELEVENLABS_API_KEY", label: "ElevenLabs", unlocks: "Best AI voice", url: "https://elevenlabs.io/app/settings/api-keys" },
   { name: "PEXELS_API_KEY", label: "Pexels", unlocks: "Free stock photos", url: "https://www.pexels.com/api/new/" },
@@ -218,9 +220,11 @@ const keys = {
 };
 function detectKey(value) {
   const v = value.trim();
+  if (/^sk-ant-admin/.test(v)) return "ANTHROPIC_ADMIN_KEY";
+  if (/^sk-admin-/.test(v)) return "OPENAI_ADMIN_KEY";
   if (/^sk-ant-/.test(v)) return "ANTHROPIC_API_KEY";
   if (/^AIza[0-9A-Za-z_-]{35}$/.test(v) || /^AQ\.[0-9A-Za-z_-]{20,}$/.test(v)) return "GEMINI_API_KEY";
-  if (/^sk-(proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,}$/.test(v)) return "OPENAI_API_KEY";
+  if (/^sk-(proj-|svcacct-)?[A-Za-z0-9_-]{20,}$/.test(v)) return "OPENAI_API_KEY";
   if (/^sk_[A-Za-z0-9]{40,}$/.test(v) || /^[a-f0-9]{32}$/i.test(v)) return "ELEVENLABS_API_KEY";
   if (/^[A-Za-z0-9]{56}$/.test(v)) return "PEXELS_API_KEY";
   return null;
@@ -250,6 +254,7 @@ function findKeys(text) {
     if (m) {
       const word = m[1].toUpperCase().replace(/[^A-Z]/g, " ").split(/\s+/).find((w) => ENV_NAMES[w]);
       hint = word ? ENV_NAMES[word] : null;
+      if (hint && /ADMIN/i.test(m[1])) hint = hint.startsWith("ANTHROPIC") ? "ANTHROPIC_ADMIN_KEY" : hint.startsWith("OPENAI") ? "OPENAI_ADMIN_KEY" : hint;
       tokens = [m[2]];
     } else tokens = line.split(/[\s,;|]+/);
     for (let t of tokens) {
@@ -304,6 +309,7 @@ function friendly(e, step) {
   const pe = toProviderError(e);
   const who = WHO[step] || "Something";
   const t = {
+    budget: ["This month's budget is used up.", "Raise the budget on the 💰 Money page (or switch to free options), then press Try again."],
     missing_key: [`${who} isn't connected.`, "Add its API key on the Connect AI page, or use the backup."],
     auth: [`${who} rejected the API key.`, "Check the key on the Connect AI page, or use the backup."],
     rate_limit: [`${who} is busy.`, "Wait a minute and try again, or use the backup."],

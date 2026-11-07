@@ -3,6 +3,43 @@
 // "Change the app" chat. This part is NOT editable from the chat, so a bad
 // change can never break the tool you'd use to fix it.
 // ============================================================================
+// ---------------------------------------------------------------- desktop app: use the computer's own internet
+// In the Windows app, every web request goes through the operating system's network stack
+// (system proxy, VPN, company certificates), and services that block browser calls just work.
+(() => {
+  const net = window.cfNet;
+  if (!net || window.__cfNetBridged) return;
+  window.__cfNetBridged = true;
+  const native = window.fetch.bind(window);
+  let n = 0;
+  const DROP = new Set(["set-cookie", "set-cookie2"]);
+  window.fetch = async function (input, init) {
+    const req = new Request(input, init);
+    if (!/^https:/i.test(req.url)) return native(input, init);
+    const sig = req.signal;
+    const aborted = () => new DOMException("The operation was aborted.", sig?.reason?.name === "TimeoutError" ? "TimeoutError" : "AbortError");
+    if (sig?.aborted) throw aborted();
+    const id = "f" + ++n + "-" + Date.now();
+    const body = ["GET", "HEAD"].includes(req.method) ? null : new Uint8Array(await req.arrayBuffer());
+    let onAbort;
+    const stop = new Promise((_, rej) => {
+      onAbort = () => {
+        net.abort(id);
+        rej(aborted());
+      };
+      sig?.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      const r = await Promise.race([net.fetch({ id, url: req.url, method: req.method, headers: [...req.headers], body }), stop]);
+      if (r.error) throw new TypeError("Failed to fetch (" + r.error + ")");
+      const headers = r.headers.filter(([k]) => !DROP.has(k.toLowerCase()));
+      return new Response([101, 204, 205, 304].includes(r.status) ? null : r.body, { status: r.status, statusText: r.statusText, headers });
+    } finally {
+      sig?.removeEventListener("abort", onAbort);
+    }
+  };
+})();
+
 (() => {
   "use strict";
   const { html, render, useState, useEffect, useRef } = window.htmPreact;
