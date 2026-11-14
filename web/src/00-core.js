@@ -66,7 +66,7 @@ const loadSetting = (k, d) => {
     return d;
   }
 };
-const saveSetting = (k, v) => {
+let saveSetting = (k, v) => {
   LS.setItem(k, JSON.stringify(v));
   changed();
 };

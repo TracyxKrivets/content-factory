@@ -55,7 +55,7 @@ function recordSpend(provider, amount) {
   }).catch(() => {});
   return spendLock;
 }
-const monthSpend = async (key = monthKey()) => (await kv.get("spend:" + key, null)) || { total: 0, by: {}, days: {} };
+let monthSpend = async (key = monthKey()) => (await kv.get("spend:" + key, null)) || { total: 0, by: {}, days: {} };
 const budget = () => ({ monthly: 0, ...loadSetting("cf-budget", {}) });
 
 /** Called before every paid AI call. Stops the video (it can be resumed) once the month's budget is used. */

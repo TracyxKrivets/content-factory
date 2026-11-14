@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const read = (p) => fs.readFileSync(path.join(dir, p), "utf8");
-const vendor = ["vendor/htm-preact.umd.js", "vendor/mp4-muxer.js", "vendor/fflate.umd.js"].map(read).join("\n;\n");
+const vendor = ["vendor/htm-preact.umd.js", "vendor/mp4-muxer.js", "vendor/fflate.umd.js", "vendor/supabase.umd.js", "vendor/qrcode.js", "vendor/jsqr.min.js"].map(read).join("\n;\n");
 const files = {};
 for (const f of fs.readdirSync(path.join(dir, "src")).filter((f) => f.endsWith(".js")).sort()) files[f] = read("src/" + f);
 files["style.css"] = read("style.css");

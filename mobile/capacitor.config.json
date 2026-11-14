@@ -1,0 +1,8 @@
+{
+  "appId": "com.tracy.contentfactory",
+  "appName": "Content Factory",
+  "webDir": "www",
+  "backgroundColor": "#0b1020",
+  "android": { "allowMixedContent": false, "captureInput": true, "webContentsDebuggingEnabled": false },
+  "server": { "androidScheme": "https" }
+}

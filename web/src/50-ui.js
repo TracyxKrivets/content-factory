@@ -27,7 +27,7 @@ function useLive() {
     return () => bus.removeEventListener("live", f);
   }, []);
 }
-function useBlobUrl(key) {
+function useBlobUrl(key, tick = 0) {
   const [url, setUrl] = useState(null);
   useEffect(() => {
     let u = null, alive = true;
@@ -39,7 +39,7 @@ function useBlobUrl(key) {
       alive = false;
       if (u) URL.revokeObjectURL(u);
     };
-  }, [key]);
+  }, [key, tick]);
   return url;
 }
 // Pages switch in code, not by following links: file previewers (Claude app, phone
@@ -54,6 +54,7 @@ function go(route) {
   } catch {}
 }
 async function downloadBlob(blob, name) {
+  if (window.Capacitor?.isNativePlatform?.()) return saveNative(blob, name);
   const d = window.__cfClaude?.downloads;
   if (d) {
     try {
@@ -70,6 +71,24 @@ async function downloadBlob(blob, name) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+/** Android app: save to Documents/Content Factory and open the share sheet (TikTok, Drive, Gallery…). */
+async function saveNative(blob, name) {
+  const { Filesystem, Share } = window.Capacitor.Plugins;
+  toast("Saving…");
+  try {
+    const data = await blobToBase64(blob);
+    const tmp = await Filesystem.writeFile({ path: name, data, directory: "CACHE" });
+    let saved = false;
+    try {
+      await Filesystem.writeFile({ path: "Content Factory/" + name, data, directory: "DOCUMENTS", recursive: true });
+      saved = true;
+    } catch {}
+    toast(saved ? "Saved to Documents/Content Factory ✓" : "Ready to share");
+    await Share.share({ title: name, files: [tmp.uri] }).catch(() => {});
+  } catch (e) {
+    toast("Couldn't save the file: " + e.message, true);
+  }
 }
 async function copy(text, msg) {
   try {
@@ -190,6 +209,6 @@ function Nav({ route }) {
   return html`<nav class="nav">
     <button type="button" onClick=${() => go("make")} class="logo">CONTENT<br />FACTORY</button>
     ${L("make", "✚ Make")}${L("projects", "📁 Projects")}
-    ${L("connect", "🔌 Connect AI", practice && "amber")}${L("money", "💰 Money", over && "red")}${L("system", "⚙ System", errs > 0 && "red")}
+    ${L("connect", "🔌 Connect AI", practice && "amber")}${L("money", "💰 Money", over && "red")}${L("system", "⚙ System", errs > 0 && "red")}<${SyncPill} />
   </nav>`;
 }

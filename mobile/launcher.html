@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b1020" />
+<title>Content Factory</title>
+<style>html,body{margin:0;background:#0b1020;color:#e8ecff;font:16px system-ui,sans-serif}#boot{display:grid;place-items:center;height:100vh;opacity:.7}</style>
+</head>
+<body>
+<div id="boot">Loading Content Factory…</div>
+<script>
+// Content Factory launcher (Android app / web version).
+// Runs the newest working copy of the app: the one inside the APK, or an update that arrived
+// from the update address. Updates are checked, verified, and undone automatically if they won't start.
+(() => {
+  const FEED = "__UPDATE_URL__"; // filled in at build time
+  const BOOT_TIMEOUT = 30000;
+  const hasFeed = () => !!FEED && !FEED.startsWith("__");
+  const dbp = new Promise((res, rej) => {
+    const r = indexedDB.open("cf-launcher", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+  const get = async (k) => {
+    const d = await dbp;
+    return new Promise((res) => {
+      const q = d.transaction("kv").objectStore("kv").get(k);
+      q.onsuccess = () => res(q.result);
+      q.onerror = () => res(undefined);
+    });
+  };
+  const put = async (k, v) => {
+    const d = await dbp;
+    return new Promise((res, rej) => {
+      const t = d.transaction("kv", "readwrite");
+      t.objectStore("kv").put(v, k);
+      t.oncomplete = () => res();
+      t.onerror = () => rej(t.error);
+    });
+  };
+  const ver = (t) => (String(t).match(/"builtAt":"([^"]+)"/) || [])[1] || "";
+  const sha = async (t) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(t)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  let current = null, pending = null, bootTimer = null;
+  const listeners = [];
+
+  async function choose() {
+    const bundled = await (await fetch("app.html", { cache: "no-store" })).text();
+    const bad = (await get("bad")) || [];
+    const opts = [{ html: bundled, version: ver(bundled), updated: false, slot: "bundled" }];
+    for (const slot of ["update", "previous"]) {
+      const h = await get(slot);
+      if (h) opts.push({ html: h, version: ver(h), updated: true, slot });
+    }
+    return opts.filter((o) => o.version && !bad.includes(o.version)).sort((a, b) => (a.version < b.version ? 1 : -1))[0] || opts[0];
+  }
+  async function install(text, m = {}) {
+    const v = ver(text);
+    if (!/id="cf-source"/.test(text) || !v) return { status: "error", message: "That isn't a Content Factory app file" };
+    if (m.sha256 && (await sha(text)) !== m.sha256) return { status: "error", message: "The download was damaged; it will try again later" };
+    if (m.version && v !== m.version) return { status: "error", message: "The update didn't match its description" };
+    const best = await choose();
+    if (v <= best.version) return { status: "latest", version: best.version };
+    if (current && current.slot === "update") await put("previous", await get("update")); // keep the working one as a fallback
+    await put("update", text);
+    await put("bad", ((await get("bad")) || []).filter((x) => x !== v));
+    pending = { version: v, notes: m.notes || "" };
+    listeners.forEach((f) => {
+      try {
+        f(pending);
+      } catch {}
+    });
+    return { status: "installed", ...pending };
+  }
+  async function check() {
+    if (!hasFeed()) return { status: "off" };
+    try {
+      const r = await fetch(FEED + (FEED.includes("?") ? "&" : "?") + "t=" + Date.now(), { cache: "no-store" });
+      if (!r.ok) return { status: "error", message: "The update address answered " + r.status };
+      const m = await r.json();
+      const best = await choose();
+      if (!m.version || m.version <= best.version || ((await get("bad")) || []).includes(m.version)) return { status: "latest", version: best.version };
+      const r2 = await fetch(new URL(m.file || "app.html", FEED).href + "?v=" + encodeURIComponent(m.version), { cache: "no-store" });
+      if (!r2.ok) return { status: "error", message: "Couldn't download the update (" + r2.status + ")" };
+      return install(await r2.text(), m);
+    } catch (e) {
+      return { status: "error", message: String((e && e.message) || e) };
+    }
+  }
+  // the same controls the Windows app offers, so the app's update bar and System page work here too
+  window.cfApp = {
+    booted: () => clearTimeout(bootTimer),
+    onUpdate: (f) => listeners.push(f),
+    restart: () => location.reload(),
+    check,
+    installFile: (t) => install(String(t || "")),
+    info: async () => ({ version: current && current.version, updated: !!(current && current.updated), source: hasFeed() ? FEED : "", pending }),
+    setSource: async () => false,
+  };
+  (async () => {
+    current = await choose();
+    if (current.updated)
+      bootTimer = setTimeout(async () => {
+        await put("bad", [...((await get("bad")) || []), current.version]);
+        location.reload();
+      }, BOOT_TIMEOUT);
+    setTimeout(check, 8000);
+    setInterval(check, 30 * 60000);
+    document.open();
+    document.write(current.html);
+    document.close();
+  })().catch((e) => {
+    document.getElementById("boot").textContent = "Couldn't start: " + e.message;
+  });
+})();
+</script>
+</body>
+</html>

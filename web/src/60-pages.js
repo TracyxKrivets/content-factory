@@ -216,7 +216,7 @@ function ProjectPage({ id }) {
     let captions = `${p.title}\n${"=".repeat(p.title.length)}\n\n`;
     for (const [i, v] of doneV.entries()) {
       const n = String(i + 1).padStart(2, "0");
-      const b = await blobs.get(v.steps.assemble.output.key);
+      const b = (await blobs.get(v.steps.assemble.output.key)) || (await Sync.fetchFinal(v).catch(() => null));
       const pl = v.platform && platformById(v.platform);
       const dir = pl ? safeName(pl.name.split(" ")[0]) + "/" : "";
       if (b) files[`${dir}${n}-${safeName(v.title)}.${v.steps.assemble.output.ext || "mp4"}`] = [new Uint8Array(await b.arrayBuffer()), { level: 0 }];
@@ -239,6 +239,7 @@ function ProjectPage({ id }) {
       </div>
       <h1 style="font-size:26px">${p.title}</h1>
       <p class="dim small" style="margin:0">“${p.request}”${p.language && p.language !== "English" ? ` · ${p.language}` : ""}</p>
+      <${WaitingForWorker} videos=${videos} project=${p} />
       ${(p.refs?.links?.length > 0 || p.refs?.note || p.refs?.files?.length > 0) && html`<details style="margin-top:6px"><summary class="small" style="padding:4px 0">🎞 Reference videos (${p.refs.links.length + (p.refs.files?.length || 0)})</summary>
         <div class="small dim" style="display:grid;gap:4px">${p.refs.links.map((u, i) => html`<a href=${u} target="_blank" rel="noreferrer" style="text-decoration:underline;word-break:break-all">${p.refs.info?.[i]?.title || u}</a>`)}
         ${p.refs.note && html`<div>What to copy: ${p.refs.note}</div>`}
@@ -252,7 +253,7 @@ function ProjectPage({ id }) {
           <p class="small dim" style="margin:0">Tap a platform badge under each video for its ready-to-paste post text. Rules checked ${RULES_CHECKED}; platforms change them, so glance at each app's creator centre now and then.</p></div></details>`}
     </div>
     ${p.deletedAt && html`<div class="banner warn" style="margin-top:14px">This project is in the trash.
-      <button class="btn small primary" onClick=${() => update("projects", id, { deletedAt: null })}>Restore it</button></div>`}
+      <button class="btn small primary" onClick=${() => update("projects", id, (c) => ({ deletedAt: null, rev: (c.rev || 0) + 1 }))}>Restore it</button></div>`}
     ${!videos.length && !p.ideaError && html`<div class="card" style="margin-top:20px;text-align:center;padding:40px">
       <div style="font-size:48px" class="spin">🧠</div><h2 style="margin-top:12px">${p.styleReady ? `Coming up with ${p.count} video idea${p.count > 1 ? "s" : ""}…` : "Working out the style…"}</h2><p class="dim">This takes a few seconds.</p></div>`}
     ${p.ideaError && html`<div style="margin-top:20px"><${ErrorBox} err=${p.ideaError} onAction=${(a) => retryIdeas(id, a === "backup")} /></div>`}
@@ -280,7 +281,7 @@ function ProjectPage({ id }) {
       <span class="spacer"></span>
       ${!p.deletedAt && html`<button class="btn danger small" onClick=${async () => {
         if (!(await confirmBox({ title: "Move this project to the trash?", body: "You can restore it from Projects → Trash.", yes: "Move to trash", danger: true }))) return;
-        await update("projects", id, { deletedAt: now() });
+        await update("projects", id, (c) => ({ deletedAt: now(), rev: (c.rev || 0) + 1 }));
         queue.splice(0, queue.length, ...queue.filter((q) => !videos.some((v) => v.id === q)));
         go("projects");
       }}>🗑 Trash project</button>`}
@@ -332,7 +333,25 @@ function VideoCard({ v }) {
   const [edit, setEdit] = useState(false);
   const finalKey = v.steps.assemble.status === "done" ? v.steps.assemble.output?.key : null;
   const imgKey = v.steps.visuals.output?.images?.[0] || v.steps.visuals.output?.partial?.[0]?.key;
-  const videoUrl = useBlobUrl(finalKey);
+  const [tick, setTick] = useState(0);
+  const [cloud, setCloud] = useState(""); // "", "loading", "error"
+  const videoUrl = useBlobUrl(finalKey, tick);
+  const getCloud = () => {
+    setCloud("loading");
+    Sync.fetchFinal(v).then(() => (setCloud(""), setTick((t) => t + 1))).catch(() => setCloud("error"));
+  };
+  // made on another device: fetch it (on mobile data only if it's not huge)
+  useEffect(() => {
+    if (!finalKey || !v.cloud || !Sync.on()) return;
+    let alive = true;
+    blobs.get(finalKey).then((b) => {
+      if (b || !alive) return;
+      if (navigator.connection?.type === "cellular" && v.cloud.size > 25e6) return;
+      getCloud();
+    });
+    return () => (alive = false);
+  }, [finalKey, v.cloud?.key]);
+  const elsewhere = v.worker && v.worker.device !== Sync.me.id && Sync.on();
   const imgUrl = useBlobUrl(imgKey);
   const errStep = STEPS.find((k) => v.steps[k].status === "error");
   const err = errStep && v.steps[errStep].error;
@@ -355,17 +374,23 @@ function VideoCard({ v }) {
   return html`<div class=${"vcard" + (err ? " bad" : "")}>
     <div class="vframe">
       ${vp && html`<div class="vplat">${vp.emoji} ${vp.name}</div>`}
-      ${finalKey && videoUrl ? html`<video controls preload="metadata" playsinline src=${videoUrl} poster=${imgUrl || undefined}></video>` : html`
+      ${finalKey && !videoUrl && Sync.on() ? html`<div class="pixel dim" style="font-size:30px">☁️</div>
+        <div style="position:absolute;bottom:16px;left:10px;right:10px;text-align:center" class="small">
+          ${v.cloud ? cloud === "loading" ? "Downloading the video…" : html`<button class="btn small primary" onClick=${getCloud}>${cloud === "error" ? "Try again" : "Get video"} (${(v.cloud.size / 1e6).toFixed(1)} MB)</button>` : `Made on ${v.worker?.name || "another device"}. Uploading…`}</div>` :
+      finalKey && videoUrl ? html`<video controls preload="metadata" playsinline src=${videoUrl} poster=${imgUrl || undefined}></video>` : html`
         ${imgUrl ? html`<img src=${imgUrl} style="opacity:.45" />` : html`<div class="pixel dim" style="font-size:34px">${err ? "⚠" : "…"}</div>`}
         <div style="position:absolute;top:14px;left:0;right:0;text-align:center" class="small">
-          ${err ? "Needs a hand" : current ? STEP_WORDS[current] + (current === "assemble" && rp != null ? ` ${Math.round(rp * 100)}%` : "") : v.status === "queued" ? "In line…" : ""}</div>
+          ${err ? "Needs a hand" : current ? STEP_WORDS[current] + (current === "assemble" && rp != null ? ` ${Math.round(rp * 100)}%` : "") + (elsewhere ? ` · on ${v.worker.name}` : "") : v.status === "queued" ? (Sync.on() && !Sync.isWorker() ? "Waiting for your PC…" : "In line…") : ""}</div>
         <div class="ministeps">${WORKERS.map((w) => html`<div class=${"ministep " + workerStatus(v, w.key)} title=${w.name}>${w.icon}</div>`)}</div>`}
     </div>
     <div class="vbody">
       <div style="font-weight:700;line-height:1.3">${v.title}</div>
       ${practice && html`<div><span class="badge offline" title="The script came from practice templates. Connect an AI writer for real scripts.">🧪 Practice quality</span></div>`}
       ${err && html`<${ErrorBox} err=${err} onAction=${(a) => act(a, errStep)} />`}
-      ${finalKey && html`<button class="btn primary" onClick=${async () => downloadBlob(await blobs.get(finalKey), fname)}>⬇ DOWNLOAD</button>`}
+      ${finalKey && html`<button class="btn primary" onClick=${async () => {
+        const b = (await blobs.get(finalKey)) || (await Sync.fetchFinal(v).catch(() => null));
+        b ? downloadBlob(b, fname) : toast("The video is still uploading from your other device. Try again in a moment.", true);
+      }}>⬇ DOWNLOAD</button>`}
       ${finalKey && v.steps.final_check.output?.platforms && html`<${PlatformBadges} v=${v} />`}
       <div class="row" style="gap:6px;flex-wrap:nowrap">
         ${script && html`<button class="btn small tight" onClick=${() => setEdit(true)}>✏️ Edit</button>`}
@@ -451,7 +476,7 @@ function ProjectRow({ p, trash }) {
       <a href=${"#project-" + p.id} style="font-weight:700;line-height:1.3">${p.title}</a>
       <span class="small" style=${"color:" + STATUS[p.status]?.[1]}>${STATUS[p.status]?.[0]} · ${p.done}/${p.total} videos</span>
       <span class="small dim">${p.format.emoji} ${p.format.name} · ${ago(p.createdAt)}</span>
-      ${trash && html`<button class="btn small primary" onClick=${async () => (await update("projects", p.id, { deletedAt: null }), toast("Restored ✓"))}>♻️ Restore</button>`}
+      ${trash && html`<button class="btn small primary" onClick=${async () => (await update("projects", p.id, (c) => ({ deletedAt: null, rev: (c.rev || 0) + 1 })), toast("Restored ✓"))}>♻️ Restore</button>`}
     </div></div>`;
 }
 
@@ -550,6 +575,7 @@ function ConnectPage() {
     <h1 style="margin-top:16px">🔌 Connect AI</h1>
     <p class="dim" style="margin-top:0">Paste your keys in the box below and they sort themselves. Then pick what does each job; anything not set up falls back to the free option, so the app always works.
       ${C.inClaude ? " You're inside Claude, so the Writer and the chat can run on your Claude account with no key." : " Keys stay in this browser and go straight to each service."}</p>
+    <${SyncCard} />
     <${KeyDrop} results=${results} onTest=${test} onAdded=${(name, r) => setResults((x) => ({ ...x, [name]: r }))} />
     ${C.inClaude && html`<div class="banner warn" style="margin-bottom:14px"><span class="small">Inside Claude, the page can't reach outside services (ElevenLabs, OpenAI, Gemini, Pexels), so voice and AI pictures are off here. For those, use the downloaded-file version of the app.</span></div>`}
     <div style="display:grid;gap:16px">${ROLES.map((role) => {

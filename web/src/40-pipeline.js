@@ -296,36 +296,61 @@ async function runVideo(id) {
   if (!video) return;
   const project = await db.get("projects", video.projectId);
   if (!project || project.deletedAt) return;
-  video = await update("videos", id, { status: "working" });
-  for (const step of STEPS) {
-    const state = video.steps[step];
-    if (state.status === "done" || state.status === "skipped") continue;
-    video = await setStep(id, step, { status: "working", attempts: (state.attempts || 0) + 1, error: undefined });
-    try {
-      const res = await STEP_FNS[step]({
-        project: videoProject(project, video), video, state: video.steps[step],
-        progress: async (output) => (video = await setStep(id, step, { output })),
-        patchStep: async (s, patch) => (video = await setStep(id, s, patch)),
-        setLive: (o) => {
-          live[id] = { ...live[id], ...o };
-          bus.dispatchEvent(new Event("live"));
-        },
-      });
-      video = await setStep(id, step, { status: res.skipped ? "skipped" : "done", output: res.output, provider: res.provider, error: undefined });
-      if (step === "script") video = await update("videos", id, { title: res.output.title });
-      await addCost(project.id, res.cost, res.provider);
-      await resolveErrors((e) => e.videoId === id && e.step === step);
-    } catch (e) {
-      const fe = friendly(e, step);
-      await setStep(id, step, { status: "error", error: fe });
-      await update("videos", id, { status: "needs_attention" });
-      await logError(project.id, id, step, fe);
-      await refreshProject(project.id);
-      return;
+  // with sync on: only one device makes each video, and phones can leave the work to the PC
+  if (!(await Sync.claim(id))) return;
+  const beat = Sync.heartbeat(id);
+  try {
+    video = await update("videos", id, { status: "working" });
+    for (let i = 0; i < STEPS.length; i++) {
+      const step = STEPS[i];
+      const state = video.steps[step];
+      if (state.status === "done" || state.status === "skipped") continue;
+      const run = uid(); // if the video is changed while this step runs (edit, other device), the result is thrown away
+      video = await setStep(id, step, { status: "working", attempts: (state.attempts || 0) + 1, error: undefined, run });
+      try {
+        const res = await STEP_FNS[step]({
+          project: videoProject(project, video), video, state: video.steps[step],
+          progress: async (output) => (video = await setStep(id, step, { output })),
+          patchStep: async (s, patch) => (video = await setStep(id, s, patch)),
+          setLive: (o) => {
+            live[id] = { ...live[id], ...o };
+            bus.dispatchEvent(new Event("live"));
+            Sync.live(id, live[id]);
+          },
+        });
+        const fresh = await db.get("videos", id);
+        if (!fresh || fresh.steps[step]?.run !== run) {
+          // changed underneath us: start over from whatever the video looks like now
+          if (!fresh || fresh.status === "done" || fresh.status === "needs_attention") return;
+          video = fresh;
+          i = -1;
+          continue;
+        }
+        video = await setStep(id, step, { status: res.skipped ? "skipped" : "done", output: res.output, provider: res.provider, error: undefined });
+        if (step === "script") video = await update("videos", id, { title: res.output.title });
+        await addCost(project.id, res.cost, res.provider);
+        await resolveErrors((e) => e.videoId === id && e.step === step);
+      } catch (e) {
+        const fresh = await db.get("videos", id);
+        if (fresh && fresh.steps[step]?.run !== run && fresh.status !== "done") {
+          video = fresh; // it was changed while failing: retry with the new version
+          i = -1;
+          continue;
+        }
+        const fe = friendly(e, step);
+        await setStep(id, step, { status: "error", error: fe });
+        await update("videos", id, { status: "needs_attention" });
+        await logError(project.id, id, step, fe);
+        await refreshProject(project.id);
+        return;
+      }
     }
+    await update("videos", id, { status: "done" });
+    await refreshProject(project.id);
+    Sync.uploadFinal(id);
+  } finally {
+    beat.stop();
   }
-  await update("videos", id, { status: "done" });
-  await refreshProject(project.id);
 }
 
 async function refreshProject(projectId) {
@@ -392,6 +417,7 @@ async function createProject({ request, contentType, count, lengthSec, language,
 async function planProject(projectId) {
   let p = await db.get("projects", projectId);
   if (!p) return;
+  if (!(await Sync.claimPlan(projectId))) return; // a phone leaves planning to the PC
   // look up reference video titles once (only where the site allows it)
   if (p.refs?.links?.length && !p.refs.info) {
     const info = await Promise.all(p.refs.links.map(refInfo));
@@ -480,6 +506,11 @@ function resetSteps(v, steps, bump) {
 }
 
 async function videoAction(id, action, step) {
+  await doVideoAction(id, action, step);
+  // a deliberate change (from any device) wins over background progress written at the same moment
+  await update("videos", id, (c) => ({ rev: (c.rev || 0) + 1 }));
+}
+async function doVideoAction(id, action, step) {
   const v = await db.get("videos", id);
   const p = await db.get("projects", v.projectId);
   if (step && step !== "all" && v.steps[step]?.status === "working") throw new Error("That part is still working.");
@@ -530,7 +561,7 @@ async function editScript(id, { title, lines, caption }) {
     steps.script = { ...c.steps.script, status: "done", provider: "edited", output: script, error: undefined };
     steps.script_check = { status: "done", attempts: 0, output: { edited: true, issues: [] } };
     if (same) steps.scenes = { ...c.steps.scenes, output: c.steps.scenes.output.map((s, i) => ({ ...s, text: lines[i] })) };
-    return { title: script.title, status: "queued", steps };
+    return { title: script.title, status: "queued", steps, rev: (c.rev || 0) + 1 };
   });
   enqueue(id);
   await update("projects", v.projectId, { status: "generating" });
@@ -539,7 +570,7 @@ async function editScript(id, { title, lines, caption }) {
 async function duplicateVideo(id) {
   const v = await db.get("videos", id);
   const sib = await db.byIndex("videos", "projectId", v.projectId);
-  const copy = { ...structuredClone(v), id: uid(), index: Math.max(...sib.map((s) => s.index)) + 1, title: `${v.title} (copy)`, createdAt: now(), updatedAt: now() };
+  const copy = { ...structuredClone(v), worker: null, cloud: null, rev: 0, id: uid(), index: Math.max(...sib.map((s) => s.index)) + 1, title: `${v.title} (copy)`, createdAt: now(), updatedAt: now() };
   if (copy.status !== "done") {
     copy.status = "queued";
     for (const s of Object.values(copy.steps)) if (s.status === "working") s.status = "waiting";

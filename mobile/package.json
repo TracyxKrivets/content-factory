@@ -1,0 +1,19 @@
+{
+  "name": "content-factory-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Android app for Content Factory (Capacitor). Built by GitHub Actions: see .github/workflows/android.yml",
+  "scripts": {
+    "prepare-web": "node prepare-web.mjs",
+    "sync": "node prepare-web.mjs && cap sync android"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.2",
+    "@capacitor/core": "8.6.2",
+    "@capacitor/filesystem": "8.1.5",
+    "@capacitor/share": "8.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.2"
+  }
+}

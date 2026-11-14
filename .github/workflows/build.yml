@@ -1,0 +1,116 @@
+# Every push to main builds and publishes everything:
+#   - the web app + update feed on GitHub Pages (the Windows and Android apps update themselves from it)
+#   - the Android app (APK) and the Windows app (.exe) on the "latest" release
+name: Build and publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+env:
+  # where the installed apps look for updates (this repository's GitHub Pages site)
+  UPDATE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/latest.json
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Build the app
+        env:
+          UPDATE_NOTES: ${{ github.event.head_commit.message }}
+        run: |
+          export UPDATE_NOTES="$(printf '%s' "$UPDATE_NOTES" | head -n1 | cut -c1-140)"
+          node web/build.mjs
+      - name: Web version + update feed
+        run: |
+          mkdir -p site
+          cp web/dist/update/app.html web/dist/update/latest.json site/
+          sed "s#__UPDATE_URL__#$UPDATE_URL#" mobile/launcher.html > site/index.html
+          touch site/.nojekyll
+      - uses: actions/upload-artifact@v4
+        with: { name: app, path: web/dist/content-factory.html }
+      - uses: actions/upload-pages-artifact@v3
+        with: { path: site }
+      - uses: actions/deploy-pages@v4
+
+  android:
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - uses: actions/download-artifact@v4
+        with: { name: app, path: web/dist }
+      - name: Signing key (same key every build, so updates install over each other)
+        env:
+          KEYSTORE_B64: ${{ secrets.CF_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/cf.keystore"
+            echo "CF_KEYSTORE=$RUNNER_TEMP/cf.keystore" >> "$GITHUB_ENV"
+          fi
+      - name: Build the APK
+        env:
+          CF_KEYSTORE_PASSWORD: ${{ secrets.CF_KEYSTORE_PASSWORD }}
+          CF_KEY_ALIAS: ${{ secrets.CF_KEY_ALIAS }}
+          CF_KEY_PASSWORD: ${{ secrets.CF_KEY_PASSWORD }}
+        run: |
+          cd mobile
+          npm ci || npm install
+          node prepare-web.mjs
+          npx cap sync android
+          cd android
+          chmod +x gradlew
+          if [ -n "$CF_KEYSTORE" ]; then ./gradlew --no-daemon assembleRelease; cp app/build/outputs/apk/release/app-release.apk ../../Content-Factory.apk
+          else ./gradlew --no-daemon assembleDebug; cp app/build/outputs/apk/debug/app-debug.apk ../../Content-Factory.apk; fi
+      - uses: actions/upload-artifact@v4
+        with: { name: apk, path: Content-Factory.apk }
+
+  windows:
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/download-artifact@v4
+        with: { name: app, path: web/dist }
+      - name: Build the .exe
+        run: |
+          cd desktop
+          npm install --no-audit --no-fund electron@45 electron-builder@26
+          npm run build:win
+          cp "dist/Content Factory.exe" ../Content-Factory.exe
+      - uses: actions/upload-artifact@v4
+        with: { name: exe, path: Content-Factory.exe }
+
+  release:
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: out, merge-multiple: true }
+      - name: Publish on the "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
+          gh release create latest out/Content-Factory.apk out/Content-Factory.exe --repo "$GITHUB_REPOSITORY" \
+            --title "Content Factory (latest)" \
+            --notes "Android: download Content-Factory.apk on your phone and open it. Windows: Content-Factory.exe. Both update themselves after this."

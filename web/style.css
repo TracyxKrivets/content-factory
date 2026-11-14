@@ -162,3 +162,17 @@ details.refs > summary { list-style: none; cursor: pointer; font-weight: 700; co
 .linkrow { background: none; border: 0; color: inherit; padding: 4px 0; cursor: pointer; width: 100%; font: inherit; }
 .linkrow:hover { opacity: 0.8; }
 .alertcard { border-color: rgba(255, 90, 90, 0.5) !important; }
+.syncpill { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.sdot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; box-shadow: 0 0 8px currentColor; }
+.qr { background: #fff; padding: 6px; border-radius: 12px; margin: 0 auto; }
+.qr svg { width: 100%; height: 100%; display: block; }
+.steps { margin: 0 0 10px; padding-left: 20px; display: grid; gap: 12px; }
+/* phones: the menu is one row you can swipe, stuck to the top */
+@media (max-width: 640px) {
+  .nav { flex-wrap: nowrap; overflow-x: auto; gap: 2px; padding: 8px 10px; position: sticky; top: 0; z-index: 50; background: rgba(11, 16, 32, 0.94); backdrop-filter: blur(8px); scrollbar-width: none; padding-top: max(8px, env(safe-area-inset-top)); }
+  .nav::-webkit-scrollbar { display: none; }
+  .nav .logo { display: none; }
+  .nav .link { padding: 8px 11px; font-size: 14px; white-space: nowrap; flex: none; }
+  .nav .dot { top: 3px; right: 2px; width: 8px; height: 8px; }
+  .syncard .qr { width: 150px !important; height: 150px !important; }
+}

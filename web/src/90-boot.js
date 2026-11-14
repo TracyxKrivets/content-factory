@@ -13,7 +13,8 @@ async function cleanupFiles() {
   window.__cfGo = go; // lets the "Change the app" chat open pages
   window.__cfShell?.ready(); // tells the loader this version started fine
   navigator.storage?.persist?.().catch(() => {});
+  await Sync.connect(); // live sync with your other devices (if set up)
   await resumeAll();
   if (!running.size && !queue.length) cleanupFiles().catch(() => {});
-  window.__cf = { db, kv, blobs, keys, running, queue }; // for debugging from the console
+  window.__cf = { db, kv, blobs, keys, running, queue, Sync, live, editScript, update, saveSetting, budget, now }; // for debugging from the console
 })();
