@@ -117,7 +117,7 @@ function supabaseAdapter(url, anon) {
   };
 }
 
-const SYNCED_SETTINGS = new Set(["cf-roles", "cf-models", "cf-budget", "cf-sora", "cf-gemini", "cf-types"]);
+const SYNCED_SETTINGS = new Set(["cf-roles", "cf-models", "cf-budget", "cf-sora", "cf-gemini", "cf-types", "cf-custom-ai", "cf-key-labels"]);
 const isPhone = () => /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
 
 const Sync = (() => {

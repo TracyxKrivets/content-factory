@@ -231,13 +231,13 @@ function detectKey(value) {
 }
 // keys from services this app doesn't use (yet), so we can say what they are instead of "unknown"
 const OTHER_KEYS = [
-  [/^xai-[A-Za-z0-9]{20,}$/, "an xAI (Grok) key"],
-  [/^gsk_[A-Za-z0-9]{20,}$/, "a Groq key"],
   [/^r8_[A-Za-z0-9]{20,}$/, "a Replicate key"],
   [/^hf_[A-Za-z0-9]{20,}$/, "a Hugging Face key"],
   [/^(ghp|gho|github_pat)_[A-Za-z0-9_]{20,}$/, "a GitHub token (not an AI key: don't paste it here)"],
 ];
-const ENV_NAMES = { ANTHROPIC: "ANTHROPIC_API_KEY", CLAUDE: "ANTHROPIC_API_KEY", GEMINI: "GEMINI_API_KEY", GOOGLE: "GEMINI_API_KEY", GOOGLEAI: "GEMINI_API_KEY", OPENAI: "OPENAI_API_KEY", SORA: "OPENAI_API_KEY", ELEVENLABS: "ELEVENLABS_API_KEY", ELEVEN: "ELEVENLABS_API_KEY", XI: "ELEVENLABS_API_KEY", PEXELS: "PEXELS_API_KEY" };
+const ENV_NAMES = { ANTHROPIC: "ANTHROPIC_API_KEY", CLAUDE: "ANTHROPIC_API_KEY", GEMINI: "GEMINI_API_KEY", GOOGLE: "GEMINI_API_KEY", GOOGLEAI: "GEMINI_API_KEY", OPENAI: "OPENAI_API_KEY", SORA: "OPENAI_API_KEY", ELEVENLABS: "ELEVENLABS_API_KEY", ELEVEN: "ELEVENLABS_API_KEY", XI: "ELEVENLABS_API_KEY", PEXELS: "PEXELS_API_KEY",
+  XAI: "PRESET:xai", GROK: "PRESET:xai", GROQ: "PRESET:groq", DEEPSEEK: "PRESET:deepseek", OPENROUTER: "PRESET:openrouter",
+  MISTRAL: "PRESET:mistral", TOGETHER: "PRESET:together", MOONSHOT: "PRESET:moonshot", KIMI: "PRESET:moonshot", QWEN: "PRESET:qwen", DASHSCOPE: "PRESET:qwen" };
 /**
  * Pull every key out of pasted text: one key, several, or a whole .env file / note.
  * Returns [{ value, name (or null), named: true if the text said which service, other: what it is if unsupported }].

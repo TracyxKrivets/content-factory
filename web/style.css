@@ -176,3 +176,4 @@ details.refs > summary { list-style: none; cursor: pointer; font-weight: 700; co
   .nav .dot { top: 3px; right: 2px; width: 8px; height: 8px; }
   .syncard .qr { width: 150px !important; height: 150px !important; }
 }
+.keyrow { gap: 8px; padding: 8px 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.04); }

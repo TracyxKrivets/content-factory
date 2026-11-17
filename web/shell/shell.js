@@ -450,7 +450,13 @@ RULES
         model: (LS.get("cf-gemini-models", {}) || {}).pro || "gemini-pro-latest",
       }) } : null,
     };
-    return opts[pref] || opts["claude-account"] || opts.anthropic || opts.openai || opts.gemini || null;
+    // AI services you added yourself (Grok, DeepSeek, Mistral…): same OpenAI-style tool calls
+    if (!C.inClaude)
+      for (const c of LS.get("cf-custom-ai", []) || [])
+        if (c?.id && c.base && k["CUSTOM_" + c.id])
+          opts["custom:" + c.id] = { kind: "loop", call: (s, m) => callOpenAI(k["CUSTOM_" + c.id], s, m, { url: c.base + "/chat/completions", model: c.model, who: c.name }) };
+    const firstCustom = Object.keys(opts).find((x) => x.startsWith("custom:") && opts[x]);
+    return opts[pref] || opts["claude-account"] || opts.anthropic || opts.openai || opts.gemini || (firstCustom && opts[firstCustom]) || null;
   }
   /** Model options for a Claude-account call, from the chosen model name. */
   function sampleModelOpts(model) {

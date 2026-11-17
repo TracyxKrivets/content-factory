@@ -579,7 +579,10 @@ function ConnectPage() {
     <${KeyDrop} results=${results} onTest=${test} onAdded=${(name, r) => setResults((x) => ({ ...x, [name]: r }))} />
     ${C.inClaude && html`<div class="banner warn" style="margin-bottom:14px"><span class="small">Inside Claude, the page can't reach outside services (ElevenLabs, OpenAI, Gemini, Pexels), so voice and AI pictures are off here. For those, use the downloaded-file version of the app.</span></div>`}
     <div style="display:grid;gap:16px">${ROLES.map((role) => {
-      const states = role.options.map((o) => ({ o, st: optionState(o) }));
+      // services you added can write scripts and run the chat
+      const extra = role.id === "writer" || role.id === "chat" ? customServices().map((c) => ({ id: "custom:" + c.id, label: c.name, note: `Added by you · model ${c.model}`, key: customKey(c.id), keyLabel: c.name })) : [];
+      const opts = [...role.options.slice(0, -1), ...extra, ...role.options.slice(-1)];
+      const states = (role.id === "chat" ? [...role.options, ...extra] : role.id === "writer" ? opts : role.options).map((o) => ({ o, st: optionState(o) }));
       const auto = states.find((x) => x.st.ok && !x.o.optIn)?.o.id;
       const sel = roles[role.id] && states.find((x) => x.o.id === roles[role.id]) ? roles[role.id] : auto;
       const selected = states.find((x) => x.o.id === sel);
@@ -633,7 +636,7 @@ function SoraOptions() {
 
 function RoleOption({ o, st, on, onPick, result }) {
   const has = o.key && keys.get(o.key);
-  const label = o.key && KEY_DEFS.find((d) => d.name === o.key)?.label;
+  const label = o.keyLabel || (o.key && KEY_DEFS.find((d) => d.name === o.key)?.label);
   return html`<div class=${"roleopt" + (on ? " on" : "") + (st.ok ? "" : " off")}>
     <button class="roleopt-main" onClick=${onPick}>
       <span class="radio">${on ? "●" : "○"}</span>
@@ -682,11 +685,24 @@ const jobsFor = (name) => (KEY_DEFS.find((d) => d.name === name)?.admin ? ["your
 const keyLabel = (name) => KEY_DEFS.find((d) => d.name === name)?.label || name;
 
 /** Paste any key(s): the app works out which service each one is for and files it there. */
+/** Keys kept for services the app can't use yet (so nothing you paste is lost). */
+const otherKeys = () => Object.entries(keys.all()).filter(([k]) => k.startsWith("OTHER_")).map(([k, v]) => ({ name: k, value: v, label: (loadSetting("cf-key-labels", {}) || {})[k] || k.slice(6).replace(/_/g, " ") }));
+function saveOtherKey(value, label) {
+  const name = "OTHER_" + (label || "key").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 30);
+  let n = name, i = 2;
+  while (keys.get(n) && keys.get(n) !== value) n = name + "_" + i++;
+  keys.set(n, value);
+  saveSetting("cf-key-labels", { ...(loadSetting("cf-key-labels", {}) || {}), [n]: label });
+  return n;
+}
+
+/** Paste any key(s): the app works out which service each one is for and files it there. */
 function KeyDrop({ results = {}, onTest = () => {}, onAdded = () => {} }) {
   useData(async () => keys.all());
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const [out, setOut] = useState([]);
+  const [label, setLabel] = useState({});
   const live = canFetch();
   const file = (value, name, note = "") => {
     const had = keys.get(name);
@@ -694,6 +710,16 @@ function KeyDrop({ results = {}, onTest = () => {}, onAdded = () => {} }) {
     onAdded(name, { ok: true, message: "Connected ✓" });
     if (name === "GEMINI_API_KEY") discoverGemini(value).catch(() => {});
     return { ok: true, value, name, text: `${keyLabel(name)} key saved${had && had !== value ? " (replaced the old one)" : ""}${note}. Used for: ${jobsFor(name).join(", ")}.` };
+  };
+  /** Grok, Groq, DeepSeek, OpenRouter…: set the service up (finds its newest model) and save the key. */
+  const service = async (value, preset) => {
+    try {
+      const svc = await addCustomService({ preset, key: value });
+      return { ok: true, value, text: `${svc.name} key saved and works ✓ (model ${svc.model}). Pick “${svc.name}” for the Writer or the Change-the-app chat below.` };
+    } catch (e) {
+      if (e.code === "auth") return { ok: false, value, text: `This looks like a ${presetById(preset).name} key, but ${presetById(preset).name} rejected it. Copy it again (the whole thing).` };
+      return { ok: false, value, ask: true, text: `Couldn't set up ${presetById(preset).name}: ${e.message}` };
+    }
   };
   const run = async (raw) => {
     const found = findKeys(raw);
@@ -705,8 +731,22 @@ function KeyDrop({ results = {}, onTest = () => {}, onAdded = () => {} }) {
     setText("");
     const res = [];
     for (const k of found) {
+      const pre = (k.name || "").startsWith("PRESET:") ? k.name.slice(7) : !k.name && keyPreset(k.value);
+      if (pre) {
+        if (live) res.push(await service(k.value, pre));
+        else {
+          saveOtherKey(k.value, presetById(pre).name);
+          res.push({ ok: true, value: k.value, text: `${presetById(pre).name} key saved. To use it, add it in the downloaded app (inside Claude the app can't reach ${presetById(pre).name}).` });
+        }
+        continue;
+      }
       if (k.other) {
-        res.push({ ok: false, value: k.value, text: `That looks like ${k.other}. This app doesn't use it, so it wasn't saved.` });
+        if (/GitHub token/.test(k.other)) res.push({ ok: false, value: k.value, text: `That looks like ${k.other}, so it wasn't saved.` });
+        else {
+          const what = k.other.replace(/^an? /, "").replace(/ key$/, "");
+          saveOtherKey(k.value, what);
+          res.push({ ok: true, value: k.value, text: `${what} key saved. The app can't use ${what} yet, but it's kept here (ask Claude to add ${what} support and it'll use it).` });
+        }
         continue;
       }
       if (k.name) {
@@ -716,6 +756,7 @@ function KeyDrop({ results = {}, onTest = () => {}, onAdded = () => {} }) {
         }
         const t = await testKey(k.name, k.value);
         if (t.ok) res.push(file(k.value, k.name, " and works ✓"));
+        else if (/rejected/.test(t.message) && k.name === "OPENAI_API_KEY" && /^sk-[a-f0-9]{32}$/.test(k.value)) res.push(await service(k.value, "deepseek"));
         else if (/rejected/.test(t.message)) res.push({ ok: false, value: k.value, text: `This looks like ${/^[AEIOU]/.test(keyLabel(k.name)) ? "an" : "a"} ${keyLabel(k.name)} key, but ${keyLabel(k.name)} rejected it. Copy it again (the whole thing) or make a new one.` });
         else res.push(file(k.value, k.name, " (couldn't check it right now)"));
         continue;
@@ -729,35 +770,115 @@ function KeyDrop({ results = {}, onTest = () => {}, onAdded = () => {} }) {
           continue;
         }
       }
-      res.push({ ok: false, value: k.value, ask: true, text: `I can't tell which service ${mask(k.value)} is for${live ? " (no service accepted it)" : ""}. Which is it?` });
+      res.push({ ok: false, value: k.value, ask: true, text: `I can't tell which service ${mask(k.value)} is for${live ? " (none of the usual ones accepted it)" : ""}. Which is it?` });
     }
     setOut(res);
     setBusy(false);
   };
-  const choose = (i, name) => setOut((o) => o.map((r, j) => (j === i ? file(r.value, name) : r)));
+  const choose = async (i, name) => {
+    const r = out[i];
+    let next;
+    if (name.startsWith("preset:")) {
+      setBusy(true);
+      next = await service(r.value, name.slice(7));
+      setBusy(false);
+    } else if (name === "other") {
+      const l = (label[i] || "").trim() || "Other";
+      saveOtherKey(r.value, l);
+      next = { ok: true, value: r.value, text: `Saved as “${l}”. The app can't use it yet, but it's kept here.` };
+    } else next = file(r.value, name);
+    setOut((o) => o.map((x, j) => (j === i ? next : x)));
+  };
+  const customs = customServices();
+  const others = otherKeys();
+  const anyKeys = KEY_DEFS.some((d) => keys.get(d.name)) || customs.length || others.length;
+  const remove = async (title, fn) => {
+    if (await confirmBox({ title, body: "Anything using it falls back to the next option.", yes: "Remove", danger: true })) fn();
+  };
   return html`<div class="card" style="margin:14px 0 18px">
     <label class="lbl" style="margin:0 0 6px">🔑 Paste any API key</label>
-    <p class="small dim" style="margin:0 0 8px">Paste one key or several (even a whole .env file or a note). The app works out which service each key is for, checks it, and puts it in the right place. You don't need to pick anything.</p>
-    <textarea rows="2" placeholder="sk-ant-…  sk-proj-…  AIza…  sk_…  (paste here)" value=${text} disabled=${busy} style="width:100%;font-family:ui-monospace,monospace"
+    <p class="small dim" style="margin:0 0 8px">Paste one key or several (even a whole .env file or a note). The app works out which service each key is for, checks it, and saves it. Every key is kept, even for services the app can't use yet.</p>
+    <textarea rows="2" placeholder="sk-ant-…  sk-proj-…  AIza…  xai-…  gsk_…  (paste here)" value=${text} disabled=${busy} style="width:100%;font-family:ui-monospace,monospace"
       onInput=${(e) => setText(e.target.value)}
       onPaste=${(e) => { const t = e.clipboardData?.getData("text"); if (t) { e.preventDefault(); run(t); } }}></textarea>
     <div class="row" style="gap:8px;margin-top:8px">
       <button class="btn primary" disabled=${busy || !text.trim()} onClick=${() => run(text)}>${busy ? "Checking…" : "Add key"}</button>
       ${busy && html`<span class="small dim">Checking with each service…</span>`}
     </div>
-    ${KEY_DEFS.some((d) => keys.get(d.name)) && html`<div style="margin-top:14px"><div class="small dim" style="margin-bottom:6px">Your keys (sorted automatically)</div>
-      <div style="display:grid;gap:6px">${KEY_DEFS.filter((d) => keys.get(d.name)).map((d) => html`<div class="row" style="gap:8px;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.04)">
-        <b class="small" style="min-width:120px">${d.label}</b><code class="small dim">${mask(keys.get(d.name))}</code>
-        ${results[d.name] && html`<span class="small" style=${"color:" + (results[d.name].ok ? "var(--green)" : "var(--red)")}>${results[d.name].message}</span>`}
-        <span class="spacer"></span>
-        ${live && html`<button class="btn small" onClick=${() => onTest(d.name)}>Test</button>`}
-        <button class="btn small danger" title="Remove" onClick=${async () => {
-          if (await confirmBox({ title: `Remove your ${d.label} key?`, body: "Anything using it falls back to the next option.", yes: "Remove", danger: true })) keys.set(d.name, "");
-        }}>✕</button></div>`)}</div></div>`}
     ${out.length > 0 && html`<div style="display:grid;gap:6px;margin-top:10px">${out.map((r, i) => html`<div class="small" style=${"padding:8px 10px;border-radius:10px;background:" + (r.ok ? "rgba(80,220,140,.12)" : "rgba(255,200,90,.12)")}>
       ${r.ok ? "✓ " : "⚠️ "}${r.text}
-      ${r.ask && html`<div class="chips" style="margin-top:6px">${KEY_DEFS.filter((x) => !x.admin).map((d) => html`<button class="chip" onClick=${() => choose(i, d.name)}>${d.label}</button>`)}</div>`}
+      ${r.ask && html`<div class="chips" style="margin-top:6px">
+        ${KEY_DEFS.filter((x) => !x.admin).map((d) => html`<button class="chip" disabled=${busy} onClick=${() => choose(i, d.name)}>${d.label}</button>`)}
+        ${AI_PRESETS.filter((p) => p.id !== "other").map((p) => html`<button class="chip" disabled=${busy} onClick=${() => choose(i, "preset:" + p.id)}>${p.name}</button>`)}</div>
+        <div class="row" style="gap:6px;margin-top:6px"><input class="input" style="flex:1;padding:6px 10px" placeholder="…or name it (e.g. Runway) to keep it for later" value=${label[i] || ""} onInput=${(e) => setLabel({ ...label, [i]: e.target.value })} />
+          <button class="btn small" onClick=${() => choose(i, "other")}>Save it</button></div>`}
     </div>`)}</div>`}
+    ${anyKeys && html`<div style="margin-top:14px"><div class="small dim" style="margin-bottom:6px">Your keys (saved on this device${Sync.on() && Sync.cfg().syncKeys ? " and synced" : ""})</div>
+      <div style="display:grid;gap:6px">
+        ${KEY_DEFS.filter((d) => keys.get(d.name)).map((d) => html`<div class="row keyrow">
+          <b class="small" style="min-width:120px">${d.label}</b><code class="small dim">${mask(keys.get(d.name))}</code>
+          ${results[d.name] && html`<span class="small" style=${"color:" + (results[d.name].ok ? "var(--green)" : "var(--red)")}>${results[d.name].message}</span>`}
+          <span class="spacer"></span>
+          ${live && html`<button class="btn small" onClick=${() => onTest(d.name)}>Test</button>`}
+          <button class="btn small danger" title="Remove" onClick=${() => remove(`Remove your ${d.label} key?`, () => keys.set(d.name, ""))}>✕</button></div>`)}
+        ${customs.map((c) => html`<div class="row keyrow" style="flex-wrap:wrap">
+          <b class="small" style="min-width:120px">${c.name}</b><code class="small dim">${mask(keys.get(customKey(c.id)))}</code>
+          <span class="small dim">model</span>
+          ${c.models?.length ? html`<select class="input" style="padding:4px 8px;max-width:240px" value=${c.model} onChange=${(e) => setCustomModel(c.id, e.target.value)}>${c.models.map((m) => html`<option value=${m}>${m}</option>`)}</select>`
+            : html`<input class="input" style="padding:4px 8px;width:200px" value=${c.model} onChange=${(e) => e.target.value.trim() && setCustomModel(c.id, e.target.value.trim())} />`}
+          <span class="spacer"></span>
+          <button class="btn small danger" title="Remove" onClick=${() => remove(`Remove ${c.name}?`, () => removeCustomService(c.id))}>✕</button></div>`)}
+        ${others.map((o) => html`<div class="row keyrow">
+          <b class="small" style="min-width:120px">${o.label}</b><code class="small dim">${mask(o.value)}</code><span class="small dim">kept for later</span>
+          <span class="spacer"></span>
+          <button class="btn small danger" title="Remove" onClick=${() => remove(`Remove your ${o.label} key?`, () => keys.set(o.name, ""))}>✕</button></div>`)}
+      </div></div>`}
+    <${AddService} />
+  </div>`;
+}
+
+/** Add any AI service that works like OpenAI (most do): pick it, paste the key, done. */
+function AddService() {
+  const [open, setOpen] = useState(false);
+  const [preset, setPreset] = useState("xai");
+  const [name, setName] = useState("");
+  const [base, setBase] = useState("");
+  const [key, setKey] = useState("");
+  const [model, setModel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const p = presetById(preset);
+  if (!open) return html`<button class="btn small" style="margin-top:12px" onClick=${() => setOpen(true)}>➕ Add another AI service (Grok, DeepSeek, Mistral…)</button>`;
+  const save = async () => {
+    setBusy(true);
+    setMsg("");
+    try {
+      const svc = await addCustomService({ preset, name: name || p.name, base: base || p.base, key, model });
+      setMsg(`✓ ${svc.name} added (model ${svc.model}). Pick it for the Writer or the chat below.`);
+      setKey("");
+      setModel("");
+    } catch (e) {
+      setMsg("⚠️ " + (e.code === "auth" ? "The service rejected that key." : e.message));
+    }
+    setBusy(false);
+  };
+  return html`<div class="card" style="margin-top:12px;padding:14px">
+    <b>➕ Add another AI service</b>
+    <p class="small dim" style="margin:4px 0 10px">For writing scripts and the Change-the-app chat. Works with any service that's “OpenAI-compatible” (most are).</p>
+    <div class="chips">${AI_PRESETS.map((x) => html`<button class=${"chip" + (preset === x.id ? " on" : "")} onClick=${() => (setPreset(x.id), setName(""), setBase(""))}>${x.name}</button>`)}</div>
+    <div style="display:grid;gap:6px;margin-top:10px">
+      ${preset === "other" && html`<input class="input" placeholder="Name (e.g. My AI)" value=${name} onInput=${(e) => setName(e.target.value)} />
+        <input class="input" placeholder="API address, e.g. https://api.example.com/v1" value=${base} onInput=${(e) => setBase(e.target.value)} />`}
+      <input class="input" placeholder=${`${p.name} API key`} value=${key} onInput=${(e) => setKey(e.target.value)} />
+      <input class="input" placeholder="Model (optional: the newest is picked for you)" value=${model} onInput=${(e) => setModel(e.target.value)} />
+      <div class="row" style="gap:8px">
+        <button class="btn primary" disabled=${busy || !key.trim() || (preset === "other" && !base.trim())} onClick=${save}>${busy ? "Checking…" : "Add"}</button>
+        ${p.url && html`<button class="btn small" onClick=${() => openSite(p.url)}>Get a ${p.name} key ↗</button>`}
+        <span class="spacer"></span><button class="btn small" onClick=${() => setOpen(false)}>Close</button>
+      </div>
+      ${!canFetch() && html`<p class="small" style="color:#ffe0a0;margin:0">Inside Claude the app can't reach outside services; add services in the downloaded app.</p>`}
+      ${msg && html`<p class="small" style="margin:0">${msg}</p>`}
+    </div>
   </div>`;
 }
 
