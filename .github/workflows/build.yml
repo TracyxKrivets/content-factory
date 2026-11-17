@@ -59,17 +59,23 @@ jobs:
         with: { name: app, path: web/dist }
       - name: Signing key (same key every build, so updates install over each other)
         env:
-          KEYSTORE_B64: ${{ secrets.CF_KEYSTORE_B64 }}
+          CF_SIGNING: ${{ secrets.CF_SIGNING }}
         run: |
-          if [ -n "$KEYSTORE_B64" ]; then
-            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/cf.keystore"
-            echo "CF_KEYSTORE=$RUNNER_TEMP/cf.keystore" >> "$GITHUB_ENV"
+          # CF_SIGNING = base64 of {"keystore": <base64 keystore>, "password": ..., "alias": ...}
+          if [ -n "$CF_SIGNING" ]; then
+            echo "$CF_SIGNING" | base64 -d > "$RUNNER_TEMP/signing.json"
+            node -e '
+              const fs = require("fs"); const j = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              fs.writeFileSync(process.argv[2], Buffer.from(j.keystore, "base64"));
+              const env = [`CF_KEYSTORE=${process.argv[2]}`, `CF_KEYSTORE_PASSWORD=${j.password}`, `CF_KEY_ALIAS=${j.alias}`, `CF_KEY_PASSWORD=${j.password}`];
+              fs.appendFileSync(process.env.GITHUB_ENV, env.join("\n") + "\n");
+            ' "$RUNNER_TEMP/signing.json" "$RUNNER_TEMP/cf.keystore"
+            echo "::add-mask::$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).password)' "$RUNNER_TEMP/signing.json")"
+            rm "$RUNNER_TEMP/signing.json"
+          else
+            echo "::warning::No CF_SIGNING secret: building a test-signed APK (later versions won't install over it)"
           fi
       - name: Build the APK
-        env:
-          CF_KEYSTORE_PASSWORD: ${{ secrets.CF_KEYSTORE_PASSWORD }}
-          CF_KEY_ALIAS: ${{ secrets.CF_KEY_ALIAS }}
-          CF_KEY_PASSWORD: ${{ secrets.CF_KEY_PASSWORD }}
         run: |
           cd mobile
           npm ci || npm install
