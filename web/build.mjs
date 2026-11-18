@@ -23,7 +23,7 @@ for (const [name, code] of [["app", app], ["shell", read("shell/shell.js")], ["v
 }
 const safe = (s) => s.replace(/<\/script/gi, "<\\/script");
 // UPDATE_URL: where the desktop app looks for new versions (carried inside the app file itself)
-const source = JSON.stringify({ files, builtAt: new Date().toISOString(), ...(process.env.UPDATE_URL ? { updateUrl: process.env.UPDATE_URL } : {}) }).replace(/<\//g, "<\\/");
+const source = JSON.stringify({ files, builtAt: new Date().toISOString(), ...(process.env.UPDATE_URL ? { updateUrl: process.env.UPDATE_URL } : {}), repo: process.env.GITHUB_REPOSITORY || process.env.CF_REPO || "TracyxKrivets/content-factory" }).replace(/<\//g, "<\\/");
 const out = read("index.template.html")
   .replace("/*SHELLCSS*/", () => read("shell/shell.css"))
   .replace("/*VENDOR*/", () => safe(vendor))

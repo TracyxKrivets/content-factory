@@ -44,6 +44,18 @@
   "use strict";
   const { html, render, useState, useEffect, useRef } = window.htmPreact;
   const BUILTIN = JSON.parse(document.getElementById("cf-source").textContent);
+  // the GitHub repository Claude works on (fixes pushed there reach every device by auto-update)
+  const REPO = BUILTIN.repo || "TracyxKrivets/content-factory";
+  // recent crashes, so "Fix with Claude" can tell Claude exactly what went wrong
+  const crashes = [];
+  const noteCrash = (msg) => {
+    msg = String(msg || "").slice(0, 400);
+    if (!msg || crashes.some((c) => c.msg === msg)) return;
+    crashes.unshift({ msg, at: new Date().toISOString() });
+    crashes.length = Math.min(crashes.length, 8);
+  };
+  window.addEventListener("error", (e) => noteCrash(`${e.message}${e.filename ? ` (${String(e.filename).split("/").pop()}:${e.lineno})` : ""}`));
+  window.addEventListener("unhandledrejection", (e) => noteCrash("Unhandled: " + (e.reason?.stack || e.reason?.message || e.reason)));
   const BOOT_TIMEOUT = 12000;
 
   // ---------------------------------------------------------------- shell storage
@@ -134,6 +146,11 @@
       } catch {
         return d;
       }
+    },
+    set(k, v) {
+      try {
+        localStorage.setItem(k, JSON.stringify(v));
+      } catch {}
     },
   };
 
@@ -650,6 +667,8 @@ ${head}
   ];
   function Shell() {
     const [open, setOpen] = useState(false);
+    const [tab, setTab] = useState(() => LS.get("cf-shell-tab", "claude"));
+    useEffect(() => LS.set("cf-shell-tab", tab), [tab]);
     const [chat, setChat] = useState([]);
     const [text, setText] = useState("");
     const [busy, setBusy] = useState(false);
@@ -668,6 +687,7 @@ ${head}
         }
         if (await meta.get("reopen")) {
           setOpen(true);
+          setTab("quick");
           await meta.set("reopen", false);
         }
       })();
@@ -719,19 +739,24 @@ ${head}
     const isChanged = !!window.__cfActive?.id;
 
     return html`
-      ${!open && html`<button class="cfs-fab" onClick=${() => setOpen(true)} title="Fix, add or remove features by chatting">🛠 <span>Change the app</span></button>`}
+      ${!open && html`<button class="cfs-fab" onClick=${() => setOpen(true)} title="Fix, add or remove features with Claude">🤖 <span>Fix with Claude</span></button>`}
       ${notice && !open && html`<div class=${"cfs-notice " + notice.kind} onClick=${() => (setOpen(true), setNotice(null))}>${notice.text}</div>`}
       ${open && html`<aside class="cfs-panel">
         <header class="cfs-head">
-          <div><b>🛠 Change the app</b><div class="cfs-sub">${isChanged ? "Running your changed version" : "Running the original version"}</div></div>
+          <div><b>${tab === "claude" ? "🤖 Fix with Claude" : "⚡ Quick change"}</b><div class="cfs-sub">${tab === "claude" ? "Changes the app on every device" : isChanged ? "This device only · running your changed version" : "This device only"}</div></div>
           <div class="cfs-actions">
-            ${isChanged && html`<button class="cfs-btn" onClick=${undo} disabled=${busy} title="Go back to before the last change">↶ Undo</button>`}
-            <button class="cfs-btn" onClick=${async () => setHist(await versions.all())} disabled=${busy}>History</button>
+            ${tab === "quick" && isChanged && html`<button class="cfs-btn" onClick=${undo} disabled=${busy} title="Go back to before the last change">↶ Undo</button>`}
+            ${tab === "quick" && html`<button class="cfs-btn" onClick=${async () => setHist(await versions.all())} disabled=${busy}>History</button>`}
             <button class="cfs-btn" onClick=${() => setOpen(false)} title="Close">✕</button>
           </div>
         </header>
+        <div class="cfs-tabs">
+          <button class=${"cfs-tab" + (tab === "claude" ? " on" : "")} onClick=${() => setTab("claude")}>🤖 Claude <span class="cfs-dim">all devices</span></button>
+          <button class=${"cfs-tab" + (tab === "quick" ? " on" : "")} onClick=${() => setTab("quick")}>⚡ Quick change <span class="cfs-dim">this device, API key</span></button>
+        </div>
         ${notice && html`<div class=${"cfs-banner " + notice.kind}>${notice.text}</div>`}
-        <div class="cfs-msgs">
+        ${tab === "claude" && html`<${ClaudeFix} />`}
+        ${tab === "quick" && html`<div class="cfs-msgs">
           ${!chat.length && html`<div class="cfs-empty">
             <p>Tell me what to <b>fix, add or remove</b> and I'll change the app for you. It reloads by itself to show the change, and your projects are kept.</p>
             <p class="cfs-dim">If a change goes wrong, press <b>↶ Undo</b>. If it breaks the app, I undo it automatically.</p>
@@ -744,12 +769,12 @@ ${head}
           ${busy && html`<div class="cfs-msg assistant cfs-working"><span class="cfs-spin">◐</span> Working on it…
             ${activity.map((a) => html`<div class="cfs-act">${a}</div>`)}</div>`}
           <div ref=${end}></div>
-        </div>
-        <form class="cfs-input" onSubmit=${(e) => (e.preventDefault(), send())}>
+        </div>`}
+        ${tab === "quick" && html`<form class="cfs-input" onSubmit=${(e) => (e.preventDefault(), send())}>
           <textarea value=${text} placeholder="e.g. add a button that copies all scripts" onInput=${(e) => setText(e.target.value)}
             onKeyDown=${(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())} disabled=${busy} rows="2"></textarea>
           <button class="cfs-btn primary" type="submit" disabled=${busy || !text.trim()}>Send</button>
-        </form>
+        </form>`}
         ${hist && html`<div class="cfs-overlay" onClick=${() => setHist(null)}><div class="cfs-modal" onClick=${(e) => e.stopPropagation()}>
           <h3>Versions</h3>
           <div class="cfs-vlist">
@@ -765,6 +790,59 @@ ${head}
             <button class="cfs-btn" onClick=${() => setHist(null)}>Close</button></div>
         </div></div>`}
       </aside>`}`;
+  }
+
+  // ---------------------------------------------------------------- 🤖 Fix with Claude (your Claude plan, every device)
+  // Opens Claude Code on the app's GitHub repository with the request and the app's details filled in.
+  // Claude changes the real app, tests it and publishes it; every device then updates by itself.
+  const deviceName = () => (window.cfNet ? "Windows app" : window.Capacitor?.isNativePlatform?.() ? "Android app" : window.__cfClaude?.inClaude ? "inside Claude" : /Android|iPhone|Mobile/i.test(navigator.userAgent) ? "phone browser" : "browser");
+  async function claudeContext(withDetails) {
+    if (!withDetails) return "";
+    const lines = [`- App version: ${BUILTIN.builtAt}${window.__cfActive?.id ? " (with a local Quick change applied)" : ""}`, `- Device: ${deviceName()}, screen ${innerWidth}×${innerHeight}`, `- Page: ${location.hash || "#make"}`];
+    try {
+      const errs = ((await window.__cf?.kv.get("errors", [])) || []).filter((e) => !e.resolved).slice(0, 5);
+      for (const e of errs) lines.push(`- Problem in step "${e.step}": ${e.error?.title || ""} ${e.error?.technical ? "(" + String(e.error.technical).slice(0, 300) + ")" : ""}`.trim());
+    } catch {}
+    for (const c of crashes.slice(0, 4)) lines.push(`- App error: ${c.msg}`);
+    return "\n\nDetails from the app (filled in automatically):\n" + lines.join("\n");
+  }
+  function claudePrompt(request, ctx) {
+    return `Request from inside my Content Factory app:\n\n${request.trim()}${ctx}\n\nFollow CLAUDE.md in this repository: make the change, build, run the tests, then push to main so my Windows and Android apps update themselves. Tell me in plain words what you changed.`;
+  }
+  function ClaudeFix() {
+    const [text, setText] = useState(() => LS.get("cf-claude-draft", ""));
+    const [details, setDetails] = useState(true);
+    const [sent, setSent] = useState(null);
+    const [past, setPast] = useState(() => LS.get("cf-claude-requests", []) || []);
+    const save = (v) => (setText(v), LS.set("cf-claude-draft", v));
+    const go = async (copyOnly) => {
+      const prompt = claudePrompt(text, await claudeContext(details)).slice(0, 12000);
+      const url = `https://claude.ai/code?prompt=${encodeURIComponent(prompt)}&repositories=${encodeURIComponent(REPO)}`;
+      try {
+        await navigator.clipboard.writeText(prompt);
+      } catch {}
+      if (!copyOnly) window.open(url, "_blank", "noopener");
+      const list = [{ text: text.trim().slice(0, 200), at: new Date().toISOString() }, ...past].slice(0, 10);
+      setPast(list);
+      LS.set("cf-claude-requests", list);
+      setSent(copyOnly ? "copied" : "opened");
+      save("");
+    };
+    return html`<div class="cfs-claude">
+      ${!sent && html`<p>Tell Claude what to <b>fix, add or remove</b>. Claude changes the real app (on your Claude plan), tests it and publishes it. <b>Every device updates by itself</b> a few minutes later.</p>`}
+      ${sent && html`<div class="cfs-banner ok"><b>${sent === "opened" ? "Claude is open in a new window." : "Your request is copied."}</b><br />
+        ${sent === "opened" ? "Press send there." : html`Open <b>claude.ai/code</b>, pick <b>${REPO}</b>, paste and send.`} When Claude says it's published, a bar pops up here: press <b>Restart now</b>.
+        <div class="cfs-row" style="margin-top:8px"><button class="cfs-btn" onClick=${() => setSent(null)}>Ask for something else</button></div></div>`}
+      ${!sent && html`<textarea class="cfs-ta" rows="5" value=${text} placeholder="e.g. the Money page shows the wrong total, or: add a button that posts straight to TikTok" onInput=${(e) => save(e.target.value)}></textarea>
+        <label class="cfs-dim cfs-check"><input type="checkbox" checked=${details} onChange=${(e) => setDetails(e.target.checked)} /> Include the app's details and recent errors (helps Claude fix it faster; never includes your keys)</label>
+        <div class="cfs-row">
+          <button class="cfs-btn primary" disabled=${!text.trim()} onClick=${() => go(false)}>🤖 Open Claude</button>
+          <button class="cfs-btn" disabled=${!text.trim()} onClick=${() => go(true)} title="Copy the request to paste into Claude yourself">📋 Copy instead</button>
+        </div>
+        <p class="cfs-dim">Works with your Claude account (Pro or Max), Claude Code and the GitHub connection you set up. ${window.cfNet ? "Claude opens in a window inside the app." : ""}</p>`}
+      ${past.length > 0 && html`<details class="cfs-past"><summary class="cfs-dim">Recent requests (${past.length})</summary>
+        ${past.map((p) => html`<div class="cfs-dim">• ${p.text} <i>(${new Date(p.at).toLocaleString()})</i></div>`)}</details>`}
+    </div>`;
   }
 
   // ---------------------------------------------------------------- start

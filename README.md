@@ -23,7 +23,8 @@ Everything runs in your browser (Chrome or Edge recommended): AI calls with your
 - **🤖 Android app:** `mobile/` is a Capacitor project. GitHub Actions (`.github/workflows/build.yml`) builds the APK and the Windows `.exe` on every push and publishes them on the `latest` release, plus the web version and update feed on GitHub Pages. The apps update themselves from that feed (`mobile/launcher.html` on Android/web, `desktop/main.js` on Windows); broken updates roll back automatically.
 - Projects and keys are saved **in that browser**. A different browser or device starts empty.
 - Keep the tab open while videos are being made. If you close it, they pick up where they left off next time you open it.
-- **🛠 Change the app:** the button in the corner opens a chat. Describe what to fix, add or remove, and the AI edits the app's own code (uses your Anthropic or OpenAI key). It reloads by itself to show the change.
+- **🤖 Fix with Claude:** the button in the corner. Describe what to fix, add or remove; it opens Claude Code (your Claude plan) on this repository with the request and the app's details/errors filled in. Claude changes, tests and publishes the real app, and every device updates itself. See `CLAUDE.md`.
+- **⚡ Quick change** (second tab of the same panel): a chat that edits the app on this device only, using an API key. It reloads by itself to show the change.
   - **Undo** goes back one change; **History** lists every version; **Download this version** saves the changed app as a new file.
   - If a change stops the app from starting, it is undone automatically. The chat itself can't be edited, so it always works.
 - Developers: edit the source in `web/src/` (app) and `web/shell/` (loader + chat), then run `node web/build.mjs`.

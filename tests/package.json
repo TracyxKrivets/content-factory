@@ -1,0 +1,7 @@
+{
+  "name": "content-factory-tests",
+  "private": true,
+  "description": "End-to-end tests (headless Chromium, all AI services simulated). Run: npm install && npx playwright install chromium && node run.js",
+  "scripts": { "test": "node run.js" },
+  "dependencies": { "playwright": "1.63.0" }
+}
