@@ -200,6 +200,7 @@ const KEY_DEFS = [
   { name: "GEMINI_API_KEY", label: "Google Gemini", unlocks: "AI scripts, voice, images", url: "https://aistudio.google.com/apikey" },
   { name: "ELEVENLABS_API_KEY", label: "ElevenLabs", unlocks: "Best AI voice", url: "https://elevenlabs.io/app/settings/api-keys" },
   { name: "PEXELS_API_KEY", label: "Pexels", unlocks: "Free stock photos", url: "https://www.pexels.com/api/new/" },
+  { name: "GITHUB_TOKEN", label: "GitHub", unlocks: "Puts changes you make in the app on all your devices", url: "https://github.com/settings/tokens/new?scopes=repo&description=Content%20Factory%20app", tool: true },
 ];
 const keys = {
   all() {
@@ -220,6 +221,7 @@ const keys = {
 };
 function detectKey(value) {
   const v = value.trim();
+  if (/^(ghp|gho|ghu|github_pat)_[A-Za-z0-9_]{20,}$/.test(v)) return "GITHUB_TOKEN";
   if (/^sk-ant-admin/.test(v)) return "ANTHROPIC_ADMIN_KEY";
   if (/^sk-admin-/.test(v)) return "OPENAI_ADMIN_KEY";
   if (/^sk-ant-/.test(v)) return "ANTHROPIC_API_KEY";
@@ -233,9 +235,8 @@ function detectKey(value) {
 const OTHER_KEYS = [
   [/^r8_[A-Za-z0-9]{20,}$/, "a Replicate key"],
   [/^hf_[A-Za-z0-9]{20,}$/, "a Hugging Face key"],
-  [/^(ghp|gho|github_pat)_[A-Za-z0-9_]{20,}$/, "a GitHub token (not an AI key: don't paste it here)"],
 ];
-const ENV_NAMES = { ANTHROPIC: "ANTHROPIC_API_KEY", CLAUDE: "ANTHROPIC_API_KEY", GEMINI: "GEMINI_API_KEY", GOOGLE: "GEMINI_API_KEY", GOOGLEAI: "GEMINI_API_KEY", OPENAI: "OPENAI_API_KEY", SORA: "OPENAI_API_KEY", ELEVENLABS: "ELEVENLABS_API_KEY", ELEVEN: "ELEVENLABS_API_KEY", XI: "ELEVENLABS_API_KEY", PEXELS: "PEXELS_API_KEY",
+const ENV_NAMES = { ANTHROPIC: "ANTHROPIC_API_KEY", CLAUDE: "ANTHROPIC_API_KEY", GEMINI: "GEMINI_API_KEY", GOOGLE: "GEMINI_API_KEY", GOOGLEAI: "GEMINI_API_KEY", OPENAI: "OPENAI_API_KEY", SORA: "OPENAI_API_KEY", ELEVENLABS: "ELEVENLABS_API_KEY", ELEVEN: "ELEVENLABS_API_KEY", XI: "ELEVENLABS_API_KEY", PEXELS: "PEXELS_API_KEY", GITHUB: "GITHUB_TOKEN", GH: "GITHUB_TOKEN",
   XAI: "PRESET:xai", GROK: "PRESET:xai", GROQ: "PRESET:groq", DEEPSEEK: "PRESET:deepseek", OPENROUTER: "PRESET:openrouter",
   MISTRAL: "PRESET:mistral", TOGETHER: "PRESET:together", MOONSHOT: "PRESET:moonshot", KIMI: "PRESET:moonshot", QWEN: "PRESET:qwen", DASHSCOPE: "PRESET:qwen" };
 /**

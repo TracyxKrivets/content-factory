@@ -197,7 +197,9 @@
     // a newer file than the one these changes were made on: use the new file, keep history
     if (active && active.baseBuiltAt !== BUILTIN.builtAt) {
       await meta.set("active", null);
-      await meta.set("notice", { kind: "info", text: "This is a newer copy of the app, so it started fresh. Your earlier chat changes are still in History if you want them back." });
+      await meta.set("notice", active.published
+        ? { kind: "ok", text: "✓ Your change is now built into the app on all your devices." }
+        : { kind: "info", text: "This is a newer copy of the app, so it started fresh. Your earlier chat changes are still in History if you want them back." });
       active = null;
     }
     // the last two starts of this version never finished → it's broken: roll back
@@ -209,7 +211,7 @@
       return location.reload();
     }
     const files = active ? active.files : BUILTIN.files;
-    window.__cfActive = { id: active?.id || null, note: active?.note || "Original version", files };
+    window.__cfActive = { id: active?.id || null, note: active?.note || "Original version", files, published: active?.published || null };
     document.getElementById("cf-app-style").textContent = files["style.css"] || "";
     await meta.set("booting", { id: active?.id || "builtin", tries: tries + 1 });
     const crash = (msg) => onBootCrash(active, msg);
@@ -376,7 +378,8 @@ RULES
 - Match the existing look: CSS classes like btn, btn primary, btn small, card, chip, chip on, banner warn/bad/good, row, grid, dim, small. Keep it easy to use: big buttons, plain words, few choices.
 - New files: name them like "65-feature.js" so they load after what they use and before 90-boot.js.
 - If the request is unclear or risky (deleting their data, huge rewrites), ask one short question instead of editing.
-- When finished, reply with 1-3 short plain sentences saying what you changed (no code, no file names). The app reloads by itself to show it.
+- When finished, reply with 1-3 short plain sentences saying what you changed (no code, no file names). The app reloads by itself to show it on this device; then they can press one button to put it on all their devices (Windows, Android, web), so the change must work everywhere, not only here.
+- Each request ends with details from the app (device, page, recent errors). Use them to find problems; don't repeat them back.
 - You cannot change this chat panel or the loader, add libraries, or reach other websites. If they ask for that, say so simply.`;
   }
 
@@ -667,8 +670,6 @@ ${head}
   ];
   function Shell() {
     const [open, setOpen] = useState(false);
-    const [tab, setTab] = useState(() => LS.get("cf-shell-tab", "claude"));
-    useEffect(() => LS.set("cf-shell-tab", tab), [tab]);
     const [chat, setChat] = useState([]);
     const [text, setText] = useState("");
     const [busy, setBusy] = useState(false);
@@ -687,7 +688,6 @@ ${head}
         }
         if (await meta.get("reopen")) {
           setOpen(true);
-          setTab("quick");
           await meta.set("reopen", false);
         }
       })();
@@ -704,7 +704,7 @@ ${head}
       await addChat({ role: "user", text: msg });
       await refresh();
       try {
-        const out = await runAgent(msg, history, (a) => setActivity((x) => [...x, a]));
+        const out = await runAgent(msg + (await appContext()), history, (a) => setActivity((x) => [...x, a]));
         const costNote = out.cost ? ` (cost about $${out.cost.toFixed(out.cost < 0.01 ? 3 : 2)})` : "";
         if (out.changed) {
           await saveVersion(out.files, out.reply);
@@ -739,26 +739,23 @@ ${head}
     const isChanged = !!window.__cfActive?.id;
 
     return html`
-      ${!open && html`<button class="cfs-fab" onClick=${() => setOpen(true)} title="Fix, add or remove features with Claude">🤖 <span>Fix with Claude</span></button>`}
+      ${!open && html`<button class="cfs-fab" onClick=${() => setOpen(true)} title="Fix, add or remove features">🛠 <span>Fix or change the app</span></button>`}
       ${notice && !open && html`<div class=${"cfs-notice " + notice.kind} onClick=${() => (setOpen(true), setNotice(null))}>${notice.text}</div>`}
       ${open && html`<aside class="cfs-panel">
         <header class="cfs-head">
-          <div><b>${tab === "claude" ? "🤖 Fix with Claude" : "⚡ Quick change"}</b><div class="cfs-sub">${tab === "claude" ? "Changes the app on every device" : isChanged ? "This device only · running your changed version" : "This device only"}</div></div>
+          <div><b>🛠 Change the app</b><div class="cfs-sub">${!isChanged ? "Tell me what to fix, add or remove" : window.__cfActive.published ? "Your change is on all your devices" : "Changed on this device only"}</div></div>
           <div class="cfs-actions">
-            ${tab === "quick" && isChanged && html`<button class="cfs-btn" onClick=${undo} disabled=${busy} title="Go back to before the last change">↶ Undo</button>`}
-            ${tab === "quick" && html`<button class="cfs-btn" onClick=${async () => setHist(await versions.all())} disabled=${busy}>History</button>`}
+            ${isChanged && html`<button class="cfs-btn" onClick=${undo} disabled=${busy} title="Go back to before the last change">↶ Undo</button>`}
+            <button class="cfs-btn" onClick=${async () => setHist(await versions.all())} disabled=${busy}>History</button>
             <button class="cfs-btn" onClick=${() => setOpen(false)} title="Close">✕</button>
           </div>
         </header>
-        <div class="cfs-tabs">
-          <button class=${"cfs-tab" + (tab === "claude" ? " on" : "")} onClick=${() => setTab("claude")}>🤖 Claude <span class="cfs-dim">all devices</span></button>
-          <button class=${"cfs-tab" + (tab === "quick" ? " on" : "")} onClick=${() => setTab("quick")}>⚡ Quick change <span class="cfs-dim">this device, API key</span></button>
-        </div>
         ${notice && html`<div class=${"cfs-banner " + notice.kind}>${notice.text}</div>`}
-        ${tab === "claude" && html`<${ClaudeFix} />`}
-        ${tab === "quick" && html`<div class="cfs-msgs">
+        <${PublishBox} isChanged=${isChanged} busy=${busy} onBusy=${setBusy} />
+        <div class="cfs-msgs">
           ${!chat.length && html`<div class="cfs-empty">
-            <p>Tell me what to <b>fix, add or remove</b> and I'll change the app for you. It reloads by itself to show the change, and your projects are kept.</p>
+            <p>Tell me what to <b>fix, add or remove</b> and I'll change the app for you, right here. It reloads by itself to show the change, and your projects are kept.</p>
+            <p>I try it on <b>this device first</b>. If you like it, one press puts it on <b>all your devices</b>.</p>
             <p class="cfs-dim">If a change goes wrong, press <b>↶ Undo</b>. If it breaks the app, I undo it automatically.</p>
             ${SUGGEST.map((s) => html`<button class="cfs-chip" onClick=${() => send(s)}>${s}</button>`)}
           </div>`}
@@ -769,8 +766,8 @@ ${head}
           ${busy && html`<div class="cfs-msg assistant cfs-working"><span class="cfs-spin">◐</span> Working on it…
             ${activity.map((a) => html`<div class="cfs-act">${a}</div>`)}</div>`}
           <div ref=${end}></div>
-        </div>`}
-        ${tab === "quick" && html`<form class="cfs-input" onSubmit=${(e) => (e.preventDefault(), send())}>
+        </div>
+        ${html`<form class="cfs-input" onSubmit=${(e) => (e.preventDefault(), send())}>
           <textarea value=${text} placeholder="e.g. add a button that copies all scripts" onInput=${(e) => setText(e.target.value)}
             onKeyDown=${(e) => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())} disabled=${busy} rows="2"></textarea>
           <button class="cfs-btn primary" type="submit" disabled=${busy || !text.trim()}>Send</button>
@@ -792,57 +789,208 @@ ${head}
       </aside>`}`;
   }
 
-  // ---------------------------------------------------------------- 🤖 Fix with Claude (your Claude plan, every device)
-  // Opens Claude Code on the app's GitHub repository with the request and the app's details filled in.
-  // Claude changes the real app, tests it and publishes it; every device then updates by itself.
+  // ---------------------------------------------------------------- details for the AI (version, device, recent errors; never keys)
   const deviceName = () => (window.cfNet ? "Windows app" : window.Capacitor?.isNativePlatform?.() ? "Android app" : window.__cfClaude?.inClaude ? "inside Claude" : /Android|iPhone|Mobile/i.test(navigator.userAgent) ? "phone browser" : "browser");
-  async function claudeContext(withDetails) {
-    if (!withDetails) return "";
-    const lines = [`- App version: ${BUILTIN.builtAt}${window.__cfActive?.id ? " (with a local Quick change applied)" : ""}`, `- Device: ${deviceName()}, screen ${innerWidth}×${innerHeight}`, `- Page: ${location.hash || "#make"}`];
+  async function appContext() {
+    const lines = [`- Device: ${deviceName()}, screen ${innerWidth}×${innerHeight}`, `- Page they're on: ${location.hash || "#make"}`];
     try {
       const errs = ((await window.__cf?.kv.get("errors", [])) || []).filter((e) => !e.resolved).slice(0, 5);
       for (const e of errs) lines.push(`- Problem in step "${e.step}": ${e.error?.title || ""} ${e.error?.technical ? "(" + String(e.error.technical).slice(0, 300) + ")" : ""}`.trim());
     } catch {}
     for (const c of crashes.slice(0, 4)) lines.push(`- App error: ${c.msg}`);
-    return "\n\nDetails from the app (filled in automatically):\n" + lines.join("\n");
+    return "\n\n(Details from the app, filled in automatically. Use them if they help:\n" + lines.join("\n") + ")";
   }
-  function claudePrompt(request, ctx) {
-    return `Request from inside my Content Factory app:\n\n${request.trim()}${ctx}\n\nFollow CLAUDE.md in this repository: make the change, build, run the tests, then push to main so my Windows and Android apps update themselves. Tell me in plain words what you changed.`;
+
+  // ---------------------------------------------------------------- 📤 put a change on every device (GitHub)
+  // The app's code lives in Tracy's GitHub repository. Publishing commits the changed files there;
+  // GitHub then builds the Windows, Android and web apps, and every installed copy updates itself.
+  const GH_RX = /^(ghp|gho|ghu|github_pat)_[A-Za-z0-9_]{20,}$/;
+  const GH_KEY_URL = "https://github.com/settings/tokens/new?scopes=repo&description=Content%20Factory%20app";
+  const ghToken = () => {
+    const k = appKeys();
+    return (k.GITHUB_TOKEN || Object.values(k).find((v) => GH_RX.test(String(v).trim())) || "").trim();
+  };
+  function saveGhToken(v) {
+    v = v.trim();
+    if (window.__cf?.keys) window.__cf.keys.set("GITHUB_TOKEN", v);
+    else localStorage.setItem("cf-keys", JSON.stringify({ ...appKeys(), GITHUB_TOKEN: v }));
   }
-  function ClaudeFix() {
-    const [text, setText] = useState(() => LS.get("cf-claude-draft", ""));
-    const [details, setDetails] = useState(true);
-    const [sent, setSent] = useState(null);
-    const [past, setPast] = useState(() => LS.get("cf-claude-requests", []) || []);
-    const save = (v) => (setText(v), LS.set("cf-claude-draft", v));
-    const go = async (copyOnly) => {
-      const prompt = claudePrompt(text, await claudeContext(details)).slice(0, 12000);
-      const url = `https://claude.ai/code?prompt=${encodeURIComponent(prompt)}&repositories=${encodeURIComponent(REPO)}`;
+  const repoPath = (n) => (n === "style.css" ? "web/style.css" : "web/src/" + n);
+  const norm = (s) => String(s).replace(/\r\n/g, "\n");
+  const same = (a, b) => (a == null || b == null ? a == null && b == null : norm(a) === norm(b));
+  const ghErr = (msg, key) => Object.assign(new Error(msg), { ghKey: !!key });
+  async function gh(tok, p, opts = {}) {
+    let res;
+    try {
+      res = await fetch("https://api.github.com" + p, {
+        method: opts.method || "GET",
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        headers: { Authorization: "Bearer " + tok, Accept: opts.raw ? "application/vnd.github.raw+json" : "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", ...(opts.body ? { "Content-Type": "application/json" } : {}) },
+      });
+    } catch {
+      throw ghErr("Couldn't reach GitHub. Check your internet and press the button again.");
+    }
+    if (opts.allow404 && res.status === 404) return null;
+    if (opts.allow422 && res.status === 422) return { conflict: true };
+    if (res.status === 401) throw ghErr("GitHub didn't accept your key. Make a new one with the button below and paste it.", true);
+    if (res.status === 403 || res.status === 404) throw ghErr("That GitHub key isn't allowed to change your app. Make a new one with the button below (keep “repo” ticked) and paste it.", true);
+    if (!res.ok) throw ghErr(`GitHub had a problem (${res.status}). Press the button again in a minute.`);
+    return opts.raw ? res.text() : res.json();
+  }
+  /** Can this key change the app's repository? */
+  async function checkGhToken(tok) {
+    const r = await gh(tok, `/repos/${REPO}`);
+    if (!r?.permissions?.push) throw ghErr(`That GitHub key can't change ${REPO}. Make it while signed in as the owner, with “repo” ticked.`, true);
+  }
+  /** The chain of versions behind what's running now, newest first, back to the last published one. */
+  async function unpublishedChain() {
+    const out = [];
+    let id = window.__cfActive?.id;
+    while (id) {
+      const v = await versions.get(id);
+      if (!v || v.baseBuiltAt !== BUILTIN.builtAt) break;
+      if (v.published) return { chain: out, base: v.files };
+      out.push(v);
+      id = v.parentId;
+    }
+    return { chain: out, base: BUILTIN.files };
+  }
+  async function publishChanges(log) {
+    const tok = ghToken();
+    if (!tok) throw ghErr("NEED_KEY", true);
+    const { chain, base } = await unpublishedChain();
+    const files = window.__cfActive.files;
+    const names = [...new Set([...Object.keys(files), ...Object.keys(base)])].filter((n) => !same(files[n], base[n]));
+    if (!names.length) throw ghErr("There's nothing new to send: your devices already have this.");
+    const notes = chain.map((v) => v.note).reverse();
+    const title = ("App change: " + (notes[notes.length - 1] || "update")).replace(/\s+/g, " ").slice(0, 70);
+    const message = `${title}\n\nMade with the in-app chat on the ${deviceName()}.\n\n${notes.map((n) => "- " + n.replace(/\s+/g, " ")).join("\n")}\n\nFiles: ${names.map(repoPath).join(", ")}`;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      log("Checking your app on GitHub");
+      const head = (await gh(tok, `/repos/${REPO}/git/ref/heads/main`)).object.sha;
+      for (const n of names) {
+        const remote = await gh(tok, `/repos/${REPO}/contents/${repoPath(n)}?ref=${head}`, { raw: true, allow404: true });
+        if (!same(remote, base[n]) && !same(remote, files[n]))
+          throw ghErr("Your app got an update since this change was made, so I didn't send it (it could undo the update). Close and open the app (or press Restart now on the update bar), then ask for the change again.");
+      }
+      log("Sending the change");
+      const commit = await gh(tok, `/repos/${REPO}/git/commits/${head}`);
+      const tree = await gh(tok, `/repos/${REPO}/git/trees`, {
+        method: "POST",
+        body: { base_tree: commit.tree.sha, tree: names.map((n) => (n in files ? { path: repoPath(n), mode: "100644", type: "blob", content: files[n] } : { path: repoPath(n), mode: "100644", type: "blob", sha: null })) },
+      });
+      const made = await gh(tok, `/repos/${REPO}/git/commits`, { method: "POST", body: { message, tree: tree.sha, parents: [head] } });
+      const moved = await gh(tok, `/repos/${REPO}/git/refs/heads/main`, { method: "PATCH", body: { sha: made.sha }, allow422: true });
+      if (moved?.conflict) continue; // someone published at the same moment: check again
+      for (const v of chain) await versions.put({ ...v, published: made.sha });
+      window.__cfActive.published = made.sha;
+      const rec = { sha: made.sha, at: new Date().toISOString(), note: notes[notes.length - 1] || "", build: "building" };
+      await meta.set("publish", rec);
+      return rec;
+    }
+    throw ghErr("GitHub was busy. Press the button again.");
+  }
+  /** How GitHub's build of a published change is going: building | ok | failed. */
+  async function buildState(sha) {
+    const r = await gh(ghToken(), `/repos/${REPO}/actions/runs?head_sha=${sha}&per_page=5`);
+    const run = (r.workflow_runs || [])[0];
+    if (!run || run.status !== "completed") return "building";
+    return run.conclusion === "success" ? "ok" : "failed";
+  }
+
+  function PublishBox({ isChanged, busy, onBusy }) {
+    const [rec, setRec] = useState(null);
+    const [step, setStep] = useState(null); // null | "key" | "sending"
+    const [err, setErr] = useState("");
+    const [log, setLog] = useState([]);
+    const [key, setKey] = useState("");
+    const [, tick] = useState(0);
+    useEffect(() => {
+      meta.get("publish").then((r) => r && setRec(r));
+    }, []);
+    // follow GitHub's build while the panel is open
+    useEffect(() => {
+      if (!rec || rec.build !== "building" || !ghToken()) return;
+      let stop = false;
+      const check = async () => {
+        try {
+          const b = await buildState(rec.sha);
+          if (stop || b === "building") return;
+          const r2 = { ...rec, build: b };
+          await meta.set("publish", r2);
+          setRec(r2);
+        } catch {}
+      };
+      check();
+      const t = setInterval(check, 20000);
+      return () => ((stop = true), clearInterval(t));
+    }, [rec?.sha, rec?.build]);
+
+    const pending = isChanged && !window.__cfActive?.published;
+    async function send(withKey) {
+      setErr("");
+      if (withKey !== undefined) {
+        const k = withKey.trim();
+        if (!GH_RX.test(k)) return setErr("That doesn't look like a GitHub key. It starts with ghp_ or github_pat_. Copy it again.");
+        setStep("sending");
+        onBusy(true);
+        try {
+          await checkGhToken(k);
+          saveGhToken(k);
+          setKey("");
+        } catch (e) {
+          onBusy(false);
+          setStep("key");
+          return setErr(e.message);
+        }
+      }
+      if (!ghToken()) return setStep("key");
+      setStep("sending");
+      setLog([]);
+      onBusy(true);
       try {
-        await navigator.clipboard.writeText(prompt);
-      } catch {}
-      if (!copyOnly) window.open(url, "_blank", "noopener");
-      const list = [{ text: text.trim().slice(0, 200), at: new Date().toISOString() }, ...past].slice(0, 10);
-      setPast(list);
-      LS.set("cf-claude-requests", list);
-      setSent(copyOnly ? "copied" : "opened");
-      save("");
-    };
-    return html`<div class="cfs-claude">
-      ${!sent && html`<p>Tell Claude what to <b>fix, add or remove</b>. Claude changes the real app (on your Claude plan), tests it and publishes it. <b>Every device updates by itself</b> a few minutes later.</p>`}
-      ${sent && html`<div class="cfs-banner ok"><b>${sent === "opened" ? "Claude is open in a new window." : "Your request is copied."}</b><br />
-        ${sent === "opened" ? "Press send there." : html`Open <b>claude.ai/code</b>, pick <b>${REPO}</b>, paste and send.`} When Claude says it's published, a bar pops up here: press <b>Restart now</b>.
-        <div class="cfs-row" style="margin-top:8px"><button class="cfs-btn" onClick=${() => setSent(null)}>Ask for something else</button></div></div>`}
-      ${!sent && html`<textarea class="cfs-ta" rows="5" value=${text} placeholder="e.g. the Money page shows the wrong total, or: add a button that posts straight to TikTok" onInput=${(e) => save(e.target.value)}></textarea>
-        <label class="cfs-dim cfs-check"><input type="checkbox" checked=${details} onChange=${(e) => setDetails(e.target.checked)} /> Include the app's details and recent errors (helps Claude fix it faster; never includes your keys)</label>
+        const r = await publishChanges((a) => setLog((x) => [...x, a]));
+        await addChat({ role: "system", text: "📤 Sent to all your devices. They'll show “An update to the app is ready” in about 10 minutes." });
+        setRec(r);
+        setStep(null);
+      } catch (e) {
+        setStep(e.ghKey && e.message !== "There's nothing new to send: your devices already have this." ? "key" : null);
+        if (e.message !== "NEED_KEY") setErr(e.message);
+      }
+      onBusy(false);
+      tick((n) => n + 1);
+    }
+
+    if (window.__cfClaude?.inClaude)
+      return isChanged ? html`<div class="cfs-banner info">This change is only here. To put changes on all your devices, ask in the Windows or phone app.</div>` : null;
+    return html`
+      ${rec && !pending && step !== "sending" && html`<div class=${"cfs-banner " + (rec.build === "failed" ? "bad" : "ok")}>
+        ${rec.build === "building" && html`<b>📤 Sent to all your devices.</b><br />Building the new version now (about 10 minutes). Then each device shows “An update to the app is ready”: press <b>Restart now</b>.`}
+        ${rec.build === "ok" && html`<b>✓ Your change is ready on all devices.</b><br />Each one shows “An update to the app is ready”: press <b>Restart now</b>. This device already has it.`}
+        ${rec.build === "failed" && html`<b>The new version didn't build</b>, so your other devices didn't get it. This device still has it. Tell me “the update didn't build” and I'll fix it.`}
+        <div class="cfs-row" style="margin-top:8px"><button class="cfs-btn" onClick=${async () => (await meta.set("publish", null), setRec(null))}>OK</button></div>
+      </div>`}
+      ${pending && step !== "key" && html`<div class="cfs-banner info cfs-pub">
+        ${step === "sending"
+          ? html`<div><span class="cfs-spin">◐</span> Sending to all your devices…</div>${log.map((a) => html`<div class="cfs-act">${a}</div>`)}`
+          : html`<div>This change is <b>only on this device</b>. Happy with it?</div>
+            <button class="cfs-btn primary cfs-big" disabled=${busy} onClick=${() => send()}>📤 Put it on all my devices</button>`}
+      </div>`}
+      ${step === "key" && html`<div class="cfs-banner info cfs-pub">
+        <b>One-time step: connect GitHub</b> (where your app is kept, so all your devices get changes).
+        <ol>
+          <li>Press <b>Get GitHub key</b> and sign in.</li>
+          <li>Scroll down and press <b>Generate token</b>.</li>
+          <li>Copy the key (starts with ghp_) and paste it here.</li>
+        </ol>
+        <div class="cfs-row"><button class="cfs-btn" onClick=${() => window.open(GH_KEY_URL, "_blank")}>🔑 Get GitHub key</button></div>
+        <input class="cfs-key" type="password" placeholder="Paste the GitHub key here" value=${key} onInput=${(e) => setKey(e.target.value)} />
         <div class="cfs-row">
-          <button class="cfs-btn primary" disabled=${!text.trim()} onClick=${() => go(false)}>🤖 Open Claude</button>
-          <button class="cfs-btn" disabled=${!text.trim()} onClick=${() => go(true)} title="Copy the request to paste into Claude yourself">📋 Copy instead</button>
+          <button class="cfs-btn primary" disabled=${!key.trim() || busy} onClick=${() => send(key)}>Save and send</button>
+          <button class="cfs-btn" onClick=${() => (setStep(null), setErr(""))}>Not now</button>
         </div>
-        <p class="cfs-dim">Works with your Claude account (Pro or Max), Claude Code and the GitHub connection you set up. ${window.cfNet ? "Claude opens in a window inside the app." : ""}</p>`}
-      ${past.length > 0 && html`<details class="cfs-past"><summary class="cfs-dim">Recent requests (${past.length})</summary>
-        ${past.map((p) => html`<div class="cfs-dim">• ${p.text} <i>(${new Date(p.at).toLocaleString()})</i></div>`)}</details>`}
-    </div>`;
+      </div>`}
+      ${err && html`<div class="cfs-banner bad">${err}</div>`}`;
   }
 
   // ---------------------------------------------------------------- start

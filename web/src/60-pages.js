@@ -680,6 +680,7 @@ async function testKey(name, value) {
     GEMINI_API_KEY: () => fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000", { headers: { "x-goog-api-key": value } }),
     ELEVENLABS_API_KEY: () => fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": value } }),
     PEXELS_API_KEY: () => fetch("https://api.pexels.com/v1/search?query=night&per_page=1", { headers: { Authorization: value } }),
+    GITHUB_TOKEN: () => fetch("https://api.github.com/user", { headers: { Authorization: `Bearer ${value}`, Accept: "application/vnd.github+json" } }),
   };
   try {
     const res = await calls[name]();
@@ -694,7 +695,7 @@ async function testKey(name, value) {
 }
 
 /** Which jobs a saved key powers, e.g. "Writer, Voice, Visuals". */
-const jobsFor = (name) => (KEY_DEFS.find((d) => d.name === name)?.admin ? ["your real bills on the 💰 Money page"] : ROLES.filter((r) => r.options.some((o) => o.key === name)).map((r) => r.title));
+const jobsFor = (name) => (KEY_DEFS.find((d) => d.name === name)?.tool ? ["putting app changes on all your devices"] : KEY_DEFS.find((d) => d.name === name)?.admin ? ["your real bills on the 💰 Money page"] : ROLES.filter((r) => r.options.some((o) => o.key === name)).map((r) => r.title));
 const keyLabel = (name) => KEY_DEFS.find((d) => d.name === name)?.label || name;
 
 /** Paste any key(s): the app works out which service each one is for and files it there. */

@@ -61,7 +61,7 @@ const MOCK = () => {
   await p.click("text=DOWNLOAD ALL"); await p.waitForTimeout(1500);
   console.log("   saved through Claude:", JSON.stringify(await p.evaluate(() => window.__saves)));
   // chat on Claude account
-  await p.click(".cfs-fab"); await p.click(".cfs-tab:nth-child(2)").catch(() => {}); await p.fill(".cfs-input textarea", "change the heading"); await p.click(".cfs-input button");
+  await p.click(".cfs-fab"); await p.fill(".cfs-input textarea", "change the heading"); await p.click(".cfs-input button");
   await p.waitForEvent("load", { timeout: 30000 }); await p.waitForTimeout(1200);
   await p.click("nav .link:has-text('Make')"); await p.waitForTimeout(400);
   console.log("   chat edit via Claude account:", await p.locator("main h1").first().innerText(), "| chat model:", (await p.evaluate(() => window.__calls)).filter((c) => c.kind === "chat").map((c) => c.model).join(","));

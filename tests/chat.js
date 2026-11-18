@@ -13,7 +13,7 @@ const mock = (plan) => `window.__cfStep = 0; window.__cfMockAgent = async (syste
 };`;
 async function ask(p, plan, msg) {
   await p.evaluate(mock(plan));
-  await p.click(".cfs-fab").catch(() => {}); await p.click(".cfs-tab:nth-child(2)").catch(() => {});
+  await p.click(".cfs-fab").catch(() => {});
   await p.fill(".cfs-input textarea", msg);
   await p.click(".cfs-input button");
 }

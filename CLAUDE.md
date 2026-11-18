@@ -4,8 +4,12 @@ Tracy's bulk short-form video app. Type a request, press GENERATE VIDEOS, get fi
 shorts (script, voice, visuals, captions, music, MP4). It runs as a Windows app, an Android app,
 a web page and inside Claude, and it updates itself from this repository.
 
-Requests often arrive from the app's **🤖 Fix with Claude** panel. They end with "Details from the app",
-which hold the version, device, page and recent errors. Use them to find the problem.
+Tracy changes the app from inside it: the **🛠 Fix or change the app** panel (in `web/shell/shell.js`).
+Its AI (Tracy's API key) edits `web/src/` + `web/style.css` on that device first; then **📤 Put it on all my
+devices** commits the changed files straight to `main` through the GitHub API (Tracy's GitHub key, saved
+as `GITHUB_TOKEN`). So commits titled "App change: …" come from the app, not from a person at a computer.
+It refuses to send if the same file changed on GitHub since, so it never undoes an update.
+Keep that flow working, and keep it inside the app (no claude.ai links).
 
 ## How Tracy wants it
 
@@ -34,7 +38,7 @@ which hold the version, device, page and recent errors. Use them to find the pro
 | `web/src/60-pages.js` | the pages (Make, Projects, Connect AI, System) |
 | `web/src/70-money.js` | budget, spending, bills |
 | `web/src/75-sync.js`, `76-devices.js` | phone + PC live sync (Supabase) |
-| `web/shell/` | protected loader + "Change the app" chat + **Fix with Claude** panel + update bar (the app can't break these) |
+| `web/shell/` | protected loader + "Change the app" chat + publish-to-all-devices (GitHub) + update bar (the app can't break these) |
 | `web/build.mjs` | builds the single file `web/dist/content-factory.html` and syntax-checks everything |
 | `desktop/` | Windows app (Electron): network bridge, auto-update, in-app windows |
 | `mobile/` | Android app (Capacitor) + `launcher.html` (auto-update with rollback) |
