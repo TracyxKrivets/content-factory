@@ -571,22 +571,35 @@ function ConnectPage() {
     saveSetting("cf-models", next);
   };
   const C = CLAUDE();
+  // each job lists only the services you've added (a saved key; your Claude account inside Claude)
+  const views = ROLES.map((role) => {
+    const extra = role.id === "writer" || role.id === "chat" ? customServices().map((c) => ({ id: "custom:" + c.id, label: c.name, note: `Added by you · model ${c.model}`, key: customKey(c.id), keyLabel: c.name })) : [];
+    const all = [...role.options, ...extra];
+    const mine = all.filter((o) => (o.key ? !!keys.get(o.key) : o.claude ? C.inClaude : false));
+    return { role, mine, free: role.options.find((o) => !o.key && !o.claude) };
+  });
+  useEffect(() => {
+    // a saved pick that's no longer listed (e.g. a free option, or a removed key) is cleared,
+    // so the app always uses what this page shows
+    const next = { ...roles };
+    let dirty = false;
+    for (const v of views) if (v.mine.length && next[v.role.id] && !v.mine.some((o) => o.id === next[v.role.id])) (delete next[v.role.id], (dirty = true));
+    if (dirty) (setRoles(next), saveSetting("cf-roles", next));
+  });
   return html`<div style="max-width:820px;margin:0 auto">
     <h1 style="margin-top:16px">🔌 Connect AI</h1>
-    <p class="dim" style="margin-top:0">Paste your keys in the box below and they sort themselves. Then pick what does each job; anything not set up falls back to the free option, so the app always works.
+    <p class="dim" style="margin-top:0">Paste your keys in the box below and they sort themselves. Below, each job shows only the APIs you've added: pick which one does it.
       ${C.inClaude ? " You're inside Claude, so the Writer and the chat can run on your Claude account with no key." : " Keys stay in this browser and go straight to each service."}</p>
     <${SyncCard} />
     <${KeyDrop} results=${results} onTest=${test} onAdded=${(name, r) => setResults((x) => ({ ...x, [name]: r }))} />
     ${C.inClaude && html`<div class="banner warn" style="margin-bottom:14px"><span class="small">Inside Claude, the page can't reach outside services (ElevenLabs, OpenAI, Gemini, Pexels), so voice and AI pictures are off here. For those, use the downloaded-file version of the app.</span></div>`}
-    <div style="display:grid;gap:16px">${ROLES.map((role) => {
-      // services you added can write scripts and run the chat
-      const extra = role.id === "writer" || role.id === "chat" ? customServices().map((c) => ({ id: "custom:" + c.id, label: c.name, note: `Added by you · model ${c.model}`, key: customKey(c.id), keyLabel: c.name })) : [];
-      const opts = [...role.options.slice(0, -1), ...extra, ...role.options.slice(-1)];
-      const states = (role.id === "chat" ? [...role.options, ...extra] : role.id === "writer" ? opts : role.options).map((o) => ({ o, st: optionState(o) }));
-      const auto = states.find((x) => x.st.ok && !x.o.optIn)?.o.id;
+    ${!views.some((v) => v.mine.length) && html`<div class="card"><b>No APIs added yet</b>
+      <p class="small dim" style="margin:6px 0 0">Paste a key in the box above and it shows up here, under the job it does. Until then the app uses its free built-in options, so it still works.</p></div>`}
+    <div style="display:grid;gap:16px">${views.filter((v) => v.mine.length).map(({ role, mine }) => {
+      const states = mine.map((o) => ({ o, st: optionState(o) }));
+      const auto = states.find((x) => x.st.ok && !x.o.optIn)?.o.id || states[0]?.o.id;
       const sel = roles[role.id] && states.find((x) => x.o.id === roles[role.id]) ? roles[role.id] : auto;
       const selected = states.find((x) => x.o.id === sel);
-      const usingFallback = roles[role.id] && roles[role.id] !== sel;
       return html`<div class="card">
         <div class="row" style="margin-bottom:4px"><span style="font-size:26px">${role.icon}</span><div style="flex:1"><b style="font-size:18px">${role.title}</b><div class="small dim">${role.what}</div></div></div>
         <div style="display:grid;gap:8px;margin-top:10px">${states.map(({ o, st }) => html`<${RoleOption} o=${o} st=${st} on=${o.id === sel} onPick=${() => choose(role.id, o.id)} result=${o.key && results[o.key]} onTest=${() => test(o.key)} />`)}</div>
@@ -594,9 +607,9 @@ function ConnectPage() {
           <div class="chips">${CLAUDE_MODELS.map(([m, label, hint]) => html`<button class=${"chip" + ((models[role.id] || "claude-sonnet-5-5") === m ? " on" : "")} title=${hint} onClick=${() => setModel(role.id, m)}>${label} <span class="small" style="opacity:.7">${hint}</span></button>`)}</div></div>`}
         ${selected?.o.id === "sora" && html`<${SoraOptions} />`}
         ${role.id === "writer" && selected?.o.id === "gemini" && html`<${GeminiOptions} />`}
-        ${usingFallback && html`<p class="small" style="margin:10px 0 0;color:#ffe0a0">Your pick isn't ready yet, so “${selected?.o.label}” is used for now.</p>`}
       </div>`;
     })}</div>
+    ${views.some((v) => v.mine.length) && views.some((v) => !v.mine.length) && html`<p class="small dim" style="margin:14px 2px 0">Nothing added yet for: ${views.filter((v) => !v.mine.length).map((v) => `${v.role.icon} ${v.role.title} (uses ${v.free ? v.free.label.replace(/\s*\(.*\)$/, "") : "nothing: it's off"})`).join(", ")}. Paste a key above and it appears here.</p>`}
     <button class="btn primary" style="width:100%;margin-top:18px" onClick=${() => go("make")}>DONE: MAKE VIDEOS</button>
   </div>`;
 }
