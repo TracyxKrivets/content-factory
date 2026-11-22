@@ -7,7 +7,7 @@ const { spawn, execFileSync } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
-const ALL = ["t1", "t2", "chat", "nav2", "lang", "claude", "research2", "keys", "plat2", "plat", "gemini", "money", "custom", "mine", "sync"];
+const ALL = ["t1", "t2", "chat", "nav2", "lang", "claude", "research2", "keys", "plat2", "plat", "gemini", "money", "custom", "mine", "fallback", "sync"];
 const pick = process.argv.slice(2).filter((a) => !a.startsWith("-"));
 const tests = pick.length ? pick : ALL;
 fs.mkdirSync(path.join(__dirname, "out"), { recursive: true });

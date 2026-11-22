@@ -449,23 +449,29 @@ RULES
   }
   async function apiError(res, who) {
     const body = (await res.text().catch(() => "")).slice(0, 300);
-    if (res.status === 401 || res.status === 403 || /api key not valid|API_KEY_INVALID/i.test(body)) return new Error(`${who} rejected your API key. Check it on the Connect AI page.`);
-    if (res.status === 429) return new Error(`${who} is busy right now. Try again in a minute.`);
-    if (res.status === 402 || /credit|quota|billing/i.test(body)) return new Error(`Your ${who} account is out of credits.`);
+    if (res.status === 401 || res.status === 403 || /api key not valid|API_KEY_INVALID/i.test(body)) return Object.assign(new Error(`${who} rejected your API key. Check it on the Connect AI page.`), { switchable: true });
+    const TOPUP = { Anthropic: " Add credits at platform.claude.com/settings/billing (your Max plan's free monthly API credits go there too).", OpenAI: " Add credits at platform.openai.com/settings/organization/billing.", Gemini: " Its free limit may be used up for today; add billing at aistudio.google.com." };
+    if (res.status === 402 || /credit balance|insufficient_quota|billing|exceeded your current quota|RESOURCE_EXHAUSTED/i.test(body))
+      return Object.assign(new Error(`Your ${who} account is out of credits.${TOPUP[who] || ""}`), { switchable: true });
+    if (res.status === 429) return Object.assign(new Error(`${who} is busy right now. Try again in a minute.`), { switchable: true });
     return new Error(`${who} had a problem (${res.status}). Try again. ${body}`);
   }
   /** Which AI runs the chat: the choice on the Connect AI page, else whatever is available. */
   function pickModel() {
-    if (window.__cfMockAgent) return { kind: "loop", call: window.__cfMockAgent };
+    return pickModels()[0] || null;
+  }
+  /** Every AI the chat could use, best first: your pick on Connect AI, then the rest as backups. */
+  function pickModels() {
+    if (window.__cfMockAgent) return [{ kind: "loop", who: "test", call: window.__cfMockAgent }, ...(window.__cfMockBackup ? [{ kind: "loop", who: "Backup AI", call: window.__cfMockBackup }] : [])];
     const C = window.__cfClaude;
     const k = appKeys();
     const pref = LS.get("cf-roles", {}).chat;
     const opts = {
       "claude-account": C.sample && !C.declined ? { kind: "sample" } : null,
-      anthropic: !C.inClaude && k.ANTHROPIC_API_KEY ? { kind: "loop", call: (s, m) => callAnthropic(k.ANTHROPIC_API_KEY, s, m) } : null,
-      openai: !C.inClaude && k.OPENAI_API_KEY ? { kind: "loop", call: (s, m) => callOpenAI(k.OPENAI_API_KEY, s, m) } : null,
+      anthropic: !C.inClaude && k.ANTHROPIC_API_KEY ? { kind: "loop", who: "Anthropic", call: (s, m) => callAnthropic(k.ANTHROPIC_API_KEY, s, m) } : null,
+      openai: !C.inClaude && k.OPENAI_API_KEY ? { kind: "loop", who: "OpenAI", call: (s, m) => callOpenAI(k.OPENAI_API_KEY, s, m) } : null,
       // Gemini through its OpenAI-style endpoint; Pro (newest your key has) because editing code needs the smarter model
-      gemini: !C.inClaude && k.GEMINI_API_KEY ? { kind: "loop", call: (s, m) => callOpenAI(k.GEMINI_API_KEY, s, m, {
+      gemini: !C.inClaude && k.GEMINI_API_KEY ? { kind: "loop", who: "Gemini", call: (s, m) => callOpenAI(k.GEMINI_API_KEY, s, m, {
         url: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", who: "Gemini",
         model: (LS.get("cf-gemini-models", {}) || {}).pro || "gemini-pro-latest",
       }) } : null,
@@ -474,9 +480,9 @@ RULES
     if (!C.inClaude)
       for (const c of LS.get("cf-custom-ai", []) || [])
         if (c?.id && c.base && k["CUSTOM_" + c.id])
-          opts["custom:" + c.id] = { kind: "loop", call: (s, m) => callOpenAI(k["CUSTOM_" + c.id], s, m, { url: c.base + "/chat/completions", model: c.model, who: c.name }) };
-    const firstCustom = Object.keys(opts).find((x) => x.startsWith("custom:") && opts[x]);
-    return opts[pref] || opts["claude-account"] || opts.anthropic || opts.openai || opts.gemini || (firstCustom && opts[firstCustom]) || null;
+          opts["custom:" + c.id] = { kind: "loop", who: c.name, call: (s, m) => callOpenAI(k["CUSTOM_" + c.id], s, m, { url: c.base + "/chat/completions", model: c.model, who: c.name }) };
+    const order = [pref, "claude-account", "anthropic", "openai", "gemini", ...Object.keys(opts).filter((x) => x.startsWith("custom:"))];
+    return [...new Set(order)].map((x) => opts[x]).filter(Boolean);
   }
   /** Model options for a Claude-account call, from the chosen model name. */
   function sampleModelOpts(model) {
@@ -553,9 +559,12 @@ RULES
   /** One user request → tool loop → (maybe) a new version. */
   async function runAgent(request, history, log) {
     await window.__cfClaudeP;
-    const model = pickModel();
-    if (!model) throw new Error("NO_KEY");
-    if (model.kind === "sample") return runAgentSample(request, history, log);
+    const models = pickModels();
+    if (!models.length) throw new Error("NO_KEY");
+    if (models[0].kind === "sample") return runAgentSample(request, history, log);
+    const backups = models.filter((m) => m.kind === "loop");
+    let model = backups[0];
+    const failed = [];
     const files = structuredClone(window.__cfActive.files);
     const before = JSON.stringify(files);
     const system = systemPrompt(files);
@@ -570,7 +579,19 @@ RULES
     let reply = "";
     let fixes = 0;
     for (let step = 0; step < 30; step++) {
-      const r = await model.call(system, messages);
+      let r;
+      try {
+        r = await model.call(system, messages);
+      } catch (e) {
+        // out of credits / key refused / busy: carry on with the next AI you've added
+        const next = e.switchable && backups[backups.indexOf(model) + 1];
+        if (!next) throw failed.length ? new Error(`None of your AIs could do it right now. ${[...failed, e.message].join(" ")}`) : e;
+        failed.push(e.message);
+        log(`${model.who} didn't work (${/credits/.test(e.message) ? "out of credits" : "refused or busy"}), so I'm using ${next.who} instead`);
+        model = next;
+        step--;
+        continue;
+      }
       cost += r.cost || 0;
       messages.push({ role: "assistant", content: r.content });
       const text = r.content.filter((c) => c.type === "text").map((c) => c.text).join("\n").trim();
